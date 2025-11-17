@@ -171,7 +171,7 @@ valeur_future = npf.fv(rate=taux_annuel, nper=duree_annees, pmt=0, pv=-capital_i
 
 ## Exemple d'Intégration Complète
 
-Voir `examples/agent_2_tools_improved.py` pour une implémentation complète utilisant numpy-financial.
+Voir `examples/agent_2_tools.py` pour une implémentation complète utilisant numpy-financial.
 
 ---
 

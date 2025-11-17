@@ -26,7 +26,7 @@ python examples/agent_1_structured_data.py
 ```
 
 ### Agent 2: Agent avec outils (Tools)
-**Fichier:** `agent_2_tools_improved.py`
+**Fichier:** `agent_2_tools.py`
 
 Démontre l'utilisation d'outils Python que l'agent peut appeler pour effectuer des calculs financiers précis.
 
@@ -45,7 +45,7 @@ Outils disponibles:
 
 Exécution:
 ```bash
-python examples/agent_2_tools_improved.py
+python examples/agent_2_tools.py
 ```
 
 ### Agent 3: Workflow multi-étapes

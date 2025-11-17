@@ -26,7 +26,7 @@ open-finance-pydanticAI/
 │   └── utils.py           # Utilitaires (parsing, extraction)
 ├── examples/
 │   ├── agent_1_structured_data.py      # Extraction de données structurées
-│   ├── agent_2_tools_improved.py      # Agents avec outils Python
+│   ├── agent_2_tools.py              # Agents avec outils Python
 │   ├── agent_3_multi_step.py           # Workflows multi-étapes
 │   └── test_tool_calls_simple.py       # Tests de vérification des tool calls
 └── docs/
@@ -99,7 +99,7 @@ result = await finance_agent.run(
 #### Agent avec outils de calcul
 
 ```python
-from examples.agent_2_tools_improved import finance_calculator_agent
+from examples.agent_2_tools import finance_calculator_agent
 
 result = await finance_calculator_agent.run(
     "J'ai 50 000€ à placer à 4% par an pendant 10 ans. Combien aurai-je?"
@@ -127,7 +127,7 @@ Voir `docs/qwen3_specifications.md` pour plus de détails.
 1. **Extraction de données structurées** (`agent_1_structured_data.py`)
    - Extraction de données financières depuis du texte non structuré
 
-2. **Agents avec outils** (`agent_2_tools_improved.py`)
+2. **Agents avec outils** (`agent_2_tools.py`)
    - Intégration d'outils Python pour calculs financiers précis (intérêts composés, prêts, performance)
    - Utilise numpy-financial pour des calculs testés et précis
 
@@ -153,7 +153,7 @@ Les exemples dans `examples/` servent également de tests d'intégration :
 
 ```bash
 python examples/test_tool_calls_simple.py
-python examples/agent_2_tools_improved.py
+python examples/agent_2_tools.py
 ```
 
 ## Limitations et bonnes pratiques
