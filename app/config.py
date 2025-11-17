@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     timeout: float = 120.0
     max_retries: int = 3
     
+    # Logfire configuration
+    environment: str = "development"  # development, staging, production
+    
     # Generation settings for reasoning models
     # Qwen3 uses <think> tags which consume 40-60% of tokens
     # Increase max_tokens to allow complete responses
