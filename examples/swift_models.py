@@ -96,3 +96,11 @@ def example_with_validation():
     except Exception as e:
         print(f"❌ Erreur de validation: {e}")
 
+
+
+
+
+
+
+
+

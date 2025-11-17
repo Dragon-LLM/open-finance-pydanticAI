@@ -84,3 +84,11 @@ Notre utilitaire `extract_answer_from_reasoning()` dans `app/utils.py` gère aut
 - Détection si la réponse est tronquée
 - Nettoyage des balises de raisonnement
 
+
+
+
+
+
+
+
+

@@ -31,14 +31,6 @@ def extract_answer_from_reasoning(response: str) -> str:
         flags=re.DOTALL | re.IGNORECASE
     )
     
-    # Also remove <think> tags if present
-    cleaned = re.sub(
-        r'<think>.*?</think>',
-        '',
-        cleaned,
-        flags=re.DOTALL | re.IGNORECASE
-    )
-    
     # Clean up any remaining whitespace
     cleaned = cleaned.strip()
     
