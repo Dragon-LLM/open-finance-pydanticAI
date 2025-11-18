@@ -74,22 +74,24 @@ def calculer_var_parametrique(
     # Variance = w' * Σ * w
     # où w = vecteur de poids, Σ = matrice variance-covariance
     cov_matrix = np.outer(volatilites, volatilites) * corr_matrix
-    portfolio_variance = positions.T @ cov_matrix @ positions
+    portfolio_value = np.sum(np.abs(positions))
+    weights = positions / portfolio_value if portfolio_value > 0 else np.zeros_like(positions)
+    portfolio_variance = weights.T @ cov_matrix @ weights
     
     # Ajuster pour l'horizon temporel (scaling)
     portfolio_std_daily = np.sqrt(portfolio_variance) * np.sqrt(horizon_jours / 252)
     
     # Calculer la VaR (z-score pour le niveau de confiance)
     z_score = stats.norm.ppf(1 - niveau_confiance)
-    var_absolute = abs(z_score * portfolio_std_daily)
-    
-    # Valeur totale du portfolio
-    portfolio_value = np.sum(np.abs(positions))
+    var_absolute = abs(z_score * portfolio_std_daily * portfolio_value)
     var_percentage = (var_absolute / portfolio_value) * 100 if portfolio_value > 0 else 0
     
     # Calculer les contributions individuelles au risque
-    marginal_var = cov_matrix @ positions
-    component_var = positions * marginal_var / portfolio_std_daily if portfolio_std_daily > 0 else np.zeros(n)
+    marginal_var = cov_matrix @ weights
+    component_var = (
+        (weights * marginal_var / portfolio_std_daily) * portfolio_value
+        if portfolio_std_daily > 0 else np.zeros(n)
+    )
     
     return (
         f"Value at Risk (Paramétrique) - {niveau_confiance*100:.0f}% confiance, {horizon_jours} jour(s):\n"

@@ -1,6 +1,7 @@
 """Agent d'option pricing utilisant QuantLib via PydanticAI tools."""
 
 import asyncio
+from contextlib import contextmanager
 from typing import List
 
 from pydantic_ai import Agent, ModelSettings, Tool
@@ -11,6 +12,18 @@ except ImportError as exc:  # pragma: no cover - QuantLib disponible dans l'env
     raise RuntimeError("QuantLib-Python est requis pour cet exemple") from exc
 
 from app.models import finance_model
+
+
+@contextmanager
+def _ql_evaluation_date(evaluation_date: "ql.Date"):
+    """Scope QuantLib evaluationDate mutations to avoid leaking global state."""
+    settings = ql.Settings.instance()
+    previous_date = settings.evaluationDate
+    try:
+        settings.evaluationDate = evaluation_date
+        yield
+    finally:
+        settings.evaluationDate = previous_date
 
 
 def calculer_prix_call_black_scholes(
@@ -34,33 +47,32 @@ def calculer_prix_call_black_scholes(
     Returns:
         Prix du call + grecques principales.
     """
-    todays_date = ql.Date.todaysDate()
-    settlement_date = todays_date
+    evaluation_date = ql.Date.todaysDate()
+    with _ql_evaluation_date(evaluation_date):
+        settlement_date = evaluation_date
 
-    ql.Settings.instance().evaluationDate = todays_date
+        calendar = ql.NullCalendar()
+        day_count = ql.Actual365Fixed()
 
-    calendar = ql.NullCalendar()
-    day_count = ql.Actual365Fixed()
+        payoff = ql.PlainVanillaPayoff(ql.Option.Call, strike)
+        maturity_date = evaluation_date + int(maturite_annees * 365)
+        exercise = ql.EuropeanExercise(maturity_date)
 
-    payoff = ql.PlainVanillaPayoff(ql.Option.Call, strike)
-    maturity_date = todays_date + int(maturite_annees * 365)
-    exercise = ql.EuropeanExercise(maturity_date)
+        spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot))
+        flat_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, taux_sans_risque, day_count))
+        dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividende, day_count))
+        vol_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatilite, day_count))
 
-    spot_handle = ql.QuoteHandle(ql.SimpleQuote(spot))
-    flat_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, taux_sans_risque, day_count))
-    dividend_ts = ql.YieldTermStructureHandle(ql.FlatForward(settlement_date, dividende, day_count))
-    vol_ts = ql.BlackVolTermStructureHandle(ql.BlackConstantVol(settlement_date, calendar, volatilite, day_count))
+        process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, flat_ts, vol_ts)
+        option = ql.VanillaOption(payoff, exercise)
+        engine = ql.AnalyticEuropeanEngine(process)
+        option.setPricingEngine(engine)
 
-    process = ql.BlackScholesMertonProcess(spot_handle, dividend_ts, flat_ts, vol_ts)
-    option = ql.VanillaOption(payoff, exercise)
-    engine = ql.AnalyticEuropeanEngine(process)
-    option.setPricingEngine(engine)
-
-    price = option.NPV()
-    delta = option.delta()
-    gamma = option.gamma()
-    vega = option.vega()
-    theta = option.theta()
+        price = option.NPV()
+        delta = option.delta()
+        gamma = option.gamma()
+        vega = option.vega()
+        theta = option.theta()
 
     return (
         f"Prix call (Black-Scholes): {price:,.4f}\n"
