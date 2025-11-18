@@ -1,15 +1,11 @@
 """Wrapper qui exécute agent_2 (calc financier) et passe un contrôle compliance."""
 
 import asyncio
-import sys
-from pathlib import Path
 from typing import List
 
 from pydantic_ai import Agent, ModelSettings
 
-sys.path.append(str(Path(__file__).resolve().parent))
-
-from agent_2_tools import finance_calculator_agent  # type: ignore  # noqa: E402
+from .agent_2_tools import finance_calculator_agent  # type: ignore  # noqa: E402
 from app.models import finance_model
 
 
@@ -32,7 +28,14 @@ async def run_finance_agent(question: str):
                 args = getattr(call, "args", None)
             if name is None and hasattr(call, "name"):
                 name = call.name
-            tool_calls.append(f"{name}: {args}")
+            if name is None:
+                continue
+
+            normalized_args = args
+            if normalized_args is not None and not isinstance(normalized_args, str):
+                normalized_args = str(normalized_args)
+
+            tool_calls.append(f"{name}: {normalized_args}")
     return result, tool_calls
 
 
@@ -84,4 +87,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    # À lancer avec: python -m examples.agent_2_compliance
     asyncio.run(main())
