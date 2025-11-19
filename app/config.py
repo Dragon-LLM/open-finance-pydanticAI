@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     
     # OpenAI-compatible API settings
     api_key: str = "not-needed"  # No authentication required
-    model_name: str = "DragonLLM/qwen3-8b-fin-v1.0"
+    model_name: str = "DragonLLM/Qwen-Open-Finance-R-8B"
     
     # API configuration
     timeout: float = 120.0

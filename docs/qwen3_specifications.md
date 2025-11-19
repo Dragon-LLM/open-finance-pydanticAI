@@ -2,7 +2,7 @@
 
 ## Fenêtre de contexte maximale
 
-Le modèle **DragonLLM/qwen3-8b-fin-v1.0** (basé sur Qwen-3 8B) supporte:
+Le modèle **DragonLLM/Qwen-Open-Finance-R-8B** (basé sur Qwen-3 8B) supporte:
 
 ### Fenêtre de base
 - **32 768 tokens** (32K tokens)
