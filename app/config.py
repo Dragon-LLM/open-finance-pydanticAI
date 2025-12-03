@@ -13,13 +13,17 @@ ENDPOINTS = {
         "url": "https://jeanbaptdzd-open-finance-llm-8b.hf.space",
         "model": "dragon-llm-open-finance",  # HF Space accepts any name
     },
+    "llm_pro_finance": {
+        "url": "https://api.llm-pro-finance.com",  # Update with actual URL
+        "model": "llama-70b-finance",  # Fine-tuned Llama 70B
+    },
 }
 
 
 class Settings(BaseSettings):
     """Application settings."""
     
-    # Endpoint selection: "koyeb" or "hf"
+    # Endpoint selection: "koyeb", "hf", or "llm_pro_finance"
     endpoint: str = "koyeb"
     
     @property
@@ -39,6 +43,26 @@ class Settings(BaseSettings):
     
     # OpenAI-compatible API settings
     api_key: str = "not-needed"
+    
+    # LLM Pro Finance API key for Llama 70B model
+    llm_pro_finance_key: str = ""
+    
+    # LLM Pro Finance API URL (optional, defaults to ENDPOINTS config)
+    llm_pro_finance_url: str = ""
+    
+    @property
+    def judge_api_key(self) -> str:
+        """Get API key for judge agent (uses LLM_PRO_FINANCE_KEY if available)."""
+        if self.llm_pro_finance_key:
+            return self.llm_pro_finance_key
+        return self.api_key
+    
+    @property
+    def judge_base_url(self) -> str:
+        """Get base URL for judge agent (uses LLM_PRO_FINANCE_URL if available)."""
+        if self.llm_pro_finance_url:
+            return self.llm_pro_finance_url
+        return ENDPOINTS.get("llm_pro_finance", {}).get("url", "https://api.llm-pro-finance.com")
     
     # API configuration
     timeout: float = 120.0

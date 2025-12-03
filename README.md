@@ -98,6 +98,41 @@ Demonstrates mitigation strategies for unreliable model outputs:
 - Retry mechanisms
 - Safe agent wrappers
 
+### Judge Agent: Critical Evaluation
+**File**: `examples/judge_agent.py`
+
+Provides critical evaluation and improvement suggestions for all agent outputs. Uses a fine-tuned Llama 70B model (via LLM Pro Finance) for superior judgment capabilities.
+
+**Capabilities**:
+- **Individual Agent Review**: Evaluates correctness, quality, tool usage for each agent
+- **Comprehensive Analysis**: Reviews all agents together to identify common issues
+- **Critical Assessment**: Identifies strengths, weaknesses, and critical issues
+- **Improvement Suggestions**: Provides actionable recommendations for each agent
+- **Best Practices**: Identifies and recommends best practices observed
+
+**Evaluation Criteria**:
+- Correctness (mathematical accuracy)
+- Quality (structure, completeness, coherence)
+- Tool Usage (proper tool utilization)
+- Compliance (rule adherence)
+- Best Practices (following industry standards)
+
+**Usage**:
+```python
+from examples.judge_agent import judge_agent_output, judge_all_agents, judge_evaluation_results
+
+# Judge single agent
+review = await judge_agent_output(
+    agent_name="Agent 1",
+    agent_output=result,
+    expected_result=expected,
+    tool_calls=tool_calls
+)
+
+# Judge all agents from evaluation file
+comprehensive = await judge_evaluation_results("examples/evaluate_all_agents_results.json")
+```
+
 ## Installation
 
 ```bash
@@ -109,7 +144,13 @@ Create `.env`:
 ENDPOINT=koyeb
 API_KEY=not-needed
 MAX_TOKENS=1500
+
+# Optional: Llama 70B for Judge Agent (LLM Pro Finance)
+LLM_PRO_FINANCE_KEY=your-api-key-here
+LLM_PRO_FINANCE_URL=https://api.llm-pro-finance.com  # Optional, defaults to config
 ```
+
+**Note**: The Judge Agent uses a fine-tuned Llama 70B model for superior evaluation capabilities. If `LLM_PRO_FINANCE_KEY` is not provided, the judge agent will fall back to the default finance model.
 
 ## Usage
 

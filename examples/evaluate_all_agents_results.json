@@ -1,11 +1,11 @@
 {
-  "timestamp": "2025-12-01T13:52:28.066794",
+  "timestamp": "2025-12-03T12:39:40.898958",
   "summary": {
-    "total_agents": 8,
-    "agents_using_tools": 7,
-    "correct_results": 8,
-    "avg_tokens": 3809.625,
-    "avg_speed": 202.827433115298
+    "total_agents": 1,
+    "agents_using_tools": 0,
+    "correct_results": 1,
+    "avg_tokens": 734.0,
+    "avg_speed": 114.72113227183098
   },
   "agents": [
     {
@@ -17,7 +17,7 @@
       "tool_names": [],
       "tool_calls": [],
       "input_prompt": "Extrais le portfolio: 50 AIR.PA à 120€, 30 SAN.PA à 85€, 100 TTE.PA à 55€",
-      "output_text": "positions=[PositionBoursiere(symbole='AIR.PA', quantite=50, prix_achat=120.0, date_achat='2023-01-15'), PositionBoursiere(symbole='SAN.PA', quantite=30, prix_achat=85.0, date_achat='2023-02-20'), PositionBoursiere(symbole='TTE.PA', quantite=100, prix_achat=55.0, date_achat='2023-03-10')] valeur_totale=12150.0 date_evaluation='2023-04-05'",
+      "output_text": "positions=[PositionBoursiere(symbole='AIR.PA', quantite=50, prix_achat=120.0, date_achat='2024-01-15'), PositionBoursiere(symbole='SAN.PA', quantite=30, prix_achat=85.0, date_achat='2024-01-15'), PositionBoursiere(symbole='TTE.PA', quantite=100, prix_achat=55.0, date_achat='2024-01-15')] valeur_totale=10225.0 date_evaluation='2024-01-15'",
       "all_messages": [
         {
           "role": "unknown",
@@ -32,8 +32,8 @@
           "content": null
         }
       ],
-      "inference_time": 5.587108850479126,
-      "tokens_per_second": 131.37384998988438,
+      "inference_time": 6.398123741149902,
+      "tokens_per_second": 114.72113227183098,
       "correctness": "✓ Correct",
       "expected_result": 14050,
       "actual_result": 14050.0,
@@ -41,275 +41,6 @@
       "improvements": [
         "Calculate totals client-side (model arithmetic unreliable)",
         "Works well for data extraction"
-      ]
-    },
-    {
-      "name": "Agent 2: Financial Tools",
-      "tokens_input": 1560,
-      "tokens_output": 202,
-      "tokens_total": 1762,
-      "tools_called": true,
-      "tool_names": [
-        "calculer_valeur_future",
-        "final_result"
-      ],
-      "tool_calls": [
-        {
-          "name": "calculer_valeur_future",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "final_result",
-          "parameters": {},
-          "result": null
-        }
-      ],
-      "input_prompt": "50,000€ at 4% for 10 years. How much will I have?",
-      "output_text": "calculation_type='future_value' result=74012.22 input_parameters={'capital_initial': 50000, 'taux_annuel': 0.04, 'duree_annees': 10} explanation='Le calcul de la valeur future avec un capital initial de 50,000€, un taux annuel de 4% sur 10 ans donne un total de 74,012.22€.'",
-      "all_messages": [
-        {
-          "role": "unknown",
-          "content": null,
-          "tool_calls": []
-        },
-        {
-          "role": "unknown",
-          "content": null,
-          "tool_calls": [
-            {
-              "name": "unknown",
-              "parameters": {},
-              "result": null
-            },
-            {
-              "name": "unknown",
-              "parameters": {},
-              "result": null
-            }
-          ]
-        },
-        {
-          "role": "unknown",
-          "content": null,
-          "tool_calls": []
-        }
-      ],
-      "inference_time": 5.796459913253784,
-      "tokens_per_second": 303.97863978514414,
-      "correctness": "✓ Correct",
-      "expected_result": "~74,012€",
-      "actual_result": "74,012",
-      "errors": [],
-      "improvements": [
-        "Tool signatures normalized - accepts positive/negative inputs",
-        "Structured tool returns improve value extraction"
-      ]
-    },
-    {
-      "name": "Agent 2 Compliance: Financial Tools + Compliance",
-      "tokens_input": 2500,
-      "tokens_output": 600,
-      "tokens_total": 3100,
-      "tools_called": true,
-      "tool_names": [
-        "calculer_valeur_future",
-        "calculer_valeur_future",
-        "final_result",
-        "calculer_versement_mensuel",
-        "final_result"
-      ],
-      "tool_calls": [],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 27.747156143188477,
-      "tokens_per_second": 111.72316124948196,
-      "correctness": "✓ Correct",
-      "expected_result": "~74,012€ + Compliance check",
-      "actual_result": "74,012",
-      "errors": [],
-      "improvements": [
-        "Compliance checking working correctly",
-        "Tool signatures optimized (normalized inputs)",
-        "Structured tool returns improve value extraction"
-      ]
-    },
-    {
-      "name": "Agent 3: Multi-Step Workflow",
-      "tokens_input": 3947,
-      "tokens_output": 546,
-      "tokens_total": 4493,
-      "tools_called": true,
-      "tool_names": [
-        "calculer_rendement_portfolio",
-        "final_result"
-      ],
-      "tool_calls": [
-        {
-          "name": "calculer_rendement_portfolio",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "final_result",
-          "parameters": {},
-          "result": null
-        }
-      ],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 14.228105068206787,
-      "tokens_per_second": 315.7834425920687,
-      "correctness": "✓ Correct",
-      "expected_result": "Valid structured outputs (risk 1-5, tax regime)",
-      "actual_result": "Risk: 3/5, Tax: Mixte (PEA + Assurance-vie + SCPI)",
-      "errors": [],
-      "improvements": [
-        "Multi-step workflow working correctly",
-        "Structured outputs validated"
-      ]
-    },
-    {
-      "name": "Agent 4: Option Pricing",
-      "tokens_input": 2162,
-      "tokens_output": 383,
-      "tokens_total": 2545,
-      "tools_called": true,
-      "tool_names": [
-        "calculer_prix_call_black_scholes",
-        "calculer_prix_call_black_scholes",
-        "final_result"
-      ],
-      "tool_calls": [
-        {
-          "name": "calculer_prix_call_black_scholes",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "calculer_prix_call_black_scholes",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "final_result",
-          "parameters": {},
-          "result": null
-        }
-      ],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 10.16712212562561,
-      "tokens_per_second": 250.3166548560957,
-      "correctness": "✓ Correct",
-      "expected_result": null,
-      "actual_result": "2.0000",
-      "errors": [],
-      "improvements": [
-        "Structured tool returns improve value extraction",
-        "Option pricing working correctly"
-      ]
-    },
-    {
-      "name": "Agent 4 Compliance: Option Pricing + Compliance",
-      "tokens_input": 2000,
-      "tokens_output": 800,
-      "tokens_total": 2800,
-      "tools_called": true,
-      "tool_names": [
-        "calculer_prix_call_black_scholes",
-        "calculer_prix_call_black_scholes",
-        "final_result"
-      ],
-      "tool_calls": [],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 18.029738903045654,
-      "tokens_per_second": 155.29897659954537,
-      "correctness": "✓ Correct",
-      "expected_result": "Price in range (4.635000000000001, 5.665000000000001) (~5.15) + Compliance check",
-      "actual_result": "5.1461",
-      "errors": [],
-      "improvements": [
-        "Compliance checking working correctly",
-        "QuantLib tool usage verified",
-        "Structured tool returns improve value extraction"
-      ]
-    },
-    {
-      "name": "Agent 5: SWIFT/ISO 20022 Converter",
-      "tokens_input": 7633,
-      "tokens_output": 4290,
-      "tokens_total": 11923,
-      "tools_called": true,
-      "tool_names": [
-        "convertir_swift_vers_iso20022"
-      ],
-      "tool_calls": [
-        {
-          "name": "convertir_swift_vers_iso20022",
-          "parameters": {},
-          "result": null
-        }
-      ],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 101.5763897895813,
-      "tokens_per_second": 117.37963935023554,
-      "correctness": "✓ Correct",
-      "expected_result": "ISO 20022 XML message with conversion details",
-      "actual_result": "ISO 20022 conversion completed",
-      "errors": [],
-      "improvements": [
-        "Tool calling for message conversion working",
-        "Structured message parsing and generation"
-      ]
-    },
-    {
-      "name": "Agent 5 Validator: Message Validation",
-      "tokens_input": 2611,
-      "tokens_output": 509,
-      "tokens_total": 3120,
-      "tools_called": true,
-      "tool_names": [
-        "valider_swift_message",
-        "valider_swift_message",
-        "final_result"
-      ],
-      "tool_calls": [
-        {
-          "name": "valider_swift_message",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "valider_swift_message",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "final_result",
-          "parameters": {},
-          "result": null
-        }
-      ],
-      "input_prompt": null,
-      "output_text": null,
-      "all_messages": [],
-      "inference_time": 13.17761778831482,
-      "tokens_per_second": 236.76510049992822,
-      "correctness": "✓ Correct",
-      "expected_result": "Validation report with structure/format checks",
-      "actual_result": "Validation completed",
-      "errors": [],
-      "improvements": [
-        "Validation tool calling working",
-        "Structured validation reports"
       ]
     }
   ]
