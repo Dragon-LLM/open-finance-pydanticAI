@@ -1016,6 +1016,13 @@ Répondez avec un objet Portfolio structuré."""
     if isinstance(output, dict) and "error" in output:
         return output["error"], "", "", "Error"
     
+    # Client-side validation: Calculate total from positions (don't trust model arithmetic)
+    if hasattr(output, 'positions') and hasattr(output, 'valeur_totale'):
+        calculated_total = sum(pos.quantite * pos.prix_achat for pos in output.positions)
+        if abs(output.valeur_totale - calculated_total) > 1:
+            print(f"[WARNING] Model calculated valeur_totale={output.valeur_totale}, but correct value is {calculated_total}. Correcting.")
+            output.valeur_totale = calculated_total
+    
     # Store complete result with metadata
     complete_result = output.model_dump() if hasattr(output, 'model_dump') else output
     if isinstance(complete_result, dict):
