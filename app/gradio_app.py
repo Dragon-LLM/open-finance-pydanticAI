@@ -909,6 +909,14 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
     from pydantic_ai.models.openai import OpenAIChatModel
     from pydantic_ai.providers.openai import OpenAIProvider
     
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 2.",
+            "", "", "Error"
+        )
+    
     ready, msg = is_backend_ready("Agent 2")
     if not ready:
         return msg, "", "", "Error"
@@ -942,12 +950,10 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
             error_msg = str(primary_error)
             # Check for tool_choice error with LLM Pro Finance
             if endpoint == "llm_pro_finance" and ("tool_choice" in error_msg.lower() or "enable-auto-tool-choice" in error_msg.lower() or "Invalid response" in error_msg):
-                # LLM Pro Finance doesn't support tool_choice="auto" - try without tools or with different approach
-                # For now, provide a helpful error message
+                # LLM Pro Finance doesn't support tool_choice="auto" yet
                 raise ValueError(
-                    "LLM Pro Finance endpoint doesn't support automatic tool choice. "
-                    "Please use a different endpoint (Koyeb or HuggingFace) for Agent 2, "
-                    "or configure the LLM Pro Finance server with --enable-auto-tool-choice."
+                    "LLM Pro Finance endpoint doesn't support tool calls yet. "
+                    "This feature is coming soon. Please use Koyeb or HuggingFace endpoint for now."
                 )
             # Check for context length error
             elif "maximum context length" in error_msg.lower() or any(tok in error_msg for tok in ["8192", "8300", "8369", "8400"]):
@@ -1070,6 +1076,14 @@ def run_agent_3(prompt: str, endpoint: str = "koyeb"):
     from pydantic_ai import Agent, ModelSettings, Tool
     from app.models import get_model_for_endpoint
     
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 3.",
+            "", "", "Error"
+        )
+    
     ready, msg = is_backend_ready("Agent 3")
     if not ready:
         return msg, "", "", "Error"
@@ -1157,6 +1171,14 @@ Considérez les régimes fiscaux: PEA, assurance-vie, compte-titres, etc.""",
 
 def run_agent_4(prompt: str, endpoint: str = "koyeb"):
     """Run Agent 4 with compliance checking and detailed tool trace."""
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 4.",
+            "", "", "Error"
+        )
+    
     from examples.agent_4 import OptionPricingResult, calculer_prix_call_black_scholes
     from app.mitigation_strategies import ToolCallDetector
     from app.models import get_model_for_endpoint
@@ -1267,6 +1289,14 @@ RÈGLES ABSOLUES:
 
 def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
     """Run Agent 5 - Message Conversion."""
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 5 - Convert.",
+            "", "", "Error"
+        )
+    
     try:
         from examples.agent_5 import agent_5
         from app.models import get_model_for_endpoint
@@ -1399,6 +1429,14 @@ Répondez en français avec les messages convertis."""
 
 def run_agent_5_validate(prompt: str, endpoint: str = "koyeb"):
     """Run Agent 5 - Message Validation."""
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 5 - Validate.",
+            "", "", "Error"
+        )
+    
     from examples.agent_5_validator import agent_5_validator
     from app.models import get_model_for_endpoint
     from pydantic_ai import Agent, ModelSettings
@@ -1486,6 +1524,14 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
 
 def run_agent_5_risk(prompt: str, endpoint: str = "koyeb"):
     """Run Agent 5 - Risk Assessment."""
+    # Check if endpoint is disabled for this agent
+    if endpoint == "llm_pro_finance":
+        return (
+            "LLM Pro Finance endpoint doesn't support tool calls yet. This feature is coming soon. "
+            "Please use Koyeb or HuggingFace endpoint for Agent 5 - Risk.",
+            "", "", "Error"
+        )
+    
     try:
         from examples.agent_5_risk import agent_5_risk
         from app.models import get_model_for_endpoint
@@ -1689,7 +1735,7 @@ Provide specific, constructive feedback.""",
 # UI
 # ============================================================================
 
-def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_endpoints: list = None):
+def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_endpoints: list = None, disabled_endpoints: dict = None):
     """Create a tab for an agent with improved layout: readable output + JSON.
     
     Args:
@@ -1697,6 +1743,8 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
         run_fn: Function to run the agent (should accept prompt and endpoint parameters)
         is_judge: If True, this is the judge agent (no endpoint selector, always uses LLM Pro)
         exclude_endpoints: List of endpoint keys to exclude from the selector (e.g., ["llm_pro_finance"])
+        disabled_endpoints: Dict mapping endpoint keys to reason strings for why they're disabled
+                           (e.g., {"llm_pro_finance": "Tool calls not yet supported"})
     """
     info = AGENT_INFO[agent_key]
     
@@ -1718,11 +1766,14 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
             else:
                 # Get available endpoints
                 exclude_list = exclude_endpoints or []
+                disabled_dict = disabled_endpoints or {}
                 available_endpoints = get_available_endpoints(include_llm_pro=True)
                 
-                # Build endpoint options with labels (excluding specified endpoints)
+                # Build endpoint options with labels
+                # Include disabled endpoints but mark them clearly
                 endpoint_options = []
                 endpoint_values = []
+                disabled_info = []
                 
                 if available_endpoints.get("koyeb", False) and "koyeb" not in exclude_list:
                     endpoint_options.append("Koyeb (Qwen 8B)")
@@ -1730,17 +1781,29 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
                 if available_endpoints.get("hf", False) and "hf" not in exclude_list:
                     endpoint_options.append("HuggingFace (Qwen 8B)")
                     endpoint_values.append("hf")
-                if available_endpoints.get("llm_pro_finance", False) and "llm_pro_finance" not in exclude_list:
-                    endpoint_options.append("LLM Pro (Llama 70B)")
-                    endpoint_values.append("llm_pro_finance")
+                
+                # Handle LLM Pro - show as disabled if in disabled_endpoints, otherwise show normally
+                if available_endpoints.get("llm_pro_finance", False):
+                    if "llm_pro_finance" in disabled_dict:
+                        # Show as disabled
+                        endpoint_options.append("LLM Pro (Llama 70B) ⚠️ Disabled")
+                        endpoint_values.append("llm_pro_finance")
+                        disabled_info.append(f"**LLM Pro (Llama 70B):** {disabled_dict['llm_pro_finance']}")
+                    elif "llm_pro_finance" not in exclude_list:
+                        # Show as enabled
+                        endpoint_options.append("LLM Pro (Llama 70B)")
+                        endpoint_values.append("llm_pro_finance")
+                
                 if available_endpoints.get("ollama", False) and "ollama" not in exclude_list:
                     ollama_settings = Settings()
                     model_name = ollama_settings.ollama_model or "Local Model"
                     endpoint_options.append(f"Ollama ({model_name})")
                     endpoint_values.append("ollama")
                 
-                # Default to first available (prefer koyeb > hf > llm_pro)
-                default_endpoint = "koyeb" if "koyeb" in endpoint_values else (endpoint_values[0] if endpoint_values else "koyeb")
+                # Default to first available enabled endpoint (prefer koyeb > hf > llm_pro)
+                # Don't default to disabled endpoints
+                enabled_values = [v for v in endpoint_values if v not in disabled_dict]
+                default_endpoint = "koyeb" if "koyeb" in enabled_values else (enabled_values[0] if enabled_values else (endpoint_values[0] if endpoint_values else "koyeb"))
                 
                 if endpoint_options:
                     # Create choices as tuples (label, value) for Radio component
@@ -1752,6 +1815,16 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
                         value=default_endpoint,
                         info="Select which endpoint to use for this agent"
                     )
+                    
+                    # Show disabled endpoint info if any
+                    if disabled_info:
+                        gr.Markdown(
+                            "<div style='margin-top: 8px; padding: 8px; background: #fef3c7; border-radius: 4px; border-left: 3px solid #f59e0b;'>"
+                            + "<div style='font-size: 12px; color: #92400e;'>" +
+                            "<strong>⚠️ Disabled Endpoints:</strong><br/>" +
+                            "<br/>".join(disabled_info) +
+                            "</div></div>"
+                        )
                 else:
                     # No endpoints available - show warning
                     gr.Markdown("⚠️ **No endpoints available** - Please check server status")
@@ -1803,14 +1876,31 @@ def create_interface():
                 create_agent_tab("Agent 1", run_agent_1, is_judge=False)
             
             with gr.TabItem("Financial Calculator"):
-                # Agent 2 doesn't support LLM Pro Finance (tool_choice issue)
-                create_agent_tab("Agent 2", run_agent_2, is_judge=False, exclude_endpoints=["llm_pro_finance"])
+                # Agent 2 doesn't support LLM Pro Finance (tool_choice issue) - show as disabled
+                create_agent_tab(
+                    "Agent 2", 
+                    run_agent_2, 
+                    is_judge=False, 
+                    disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                )
             
             with gr.TabItem("Risk & Tax Advisor"):
-                create_agent_tab("Agent 3", run_agent_3, is_judge=False)
+                # Agent 3 uses tools - LLM Pro disabled
+                create_agent_tab(
+                    "Agent 3", 
+                    run_agent_3, 
+                    is_judge=False,
+                    disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                )
             
             with gr.TabItem("Option Pricing"):
-                create_agent_tab("Agent 4", run_agent_4, is_judge=False)
+                # Agent 4 uses tools - LLM Pro disabled
+                create_agent_tab(
+                    "Agent 4", 
+                    run_agent_4, 
+                    is_judge=False,
+                    disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                )
             
             with gr.TabItem("SWIFT/ISO20022"):
                 gr.Markdown("### Complete SWIFT/ISO20022 Message Processing")
@@ -1819,15 +1909,30 @@ def create_interface():
                 with gr.Tabs():
                     with gr.TabItem("Convert"):
                         gr.Markdown("**Bidirectional conversion:** SWIFT MT ↔ ISO 20022 XML")
-                        create_agent_tab("Agent 5 - Convert", run_agent_5_convert, is_judge=False)
+                        create_agent_tab(
+                            "Agent 5 - Convert", 
+                            run_agent_5_convert, 
+                            is_judge=False,
+                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                        )
                     
                     with gr.TabItem("Validate"):
                         gr.Markdown("**Message validation:** Check structure, format, and required fields")
-                        create_agent_tab("Agent 5 - Validate", run_agent_5_validate, is_judge=False)
+                        create_agent_tab(
+                            "Agent 5 - Validate", 
+                            run_agent_5_validate, 
+                            is_judge=False,
+                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                        )
                     
                     with gr.TabItem("Risk Assessment"):
                         gr.Markdown("**AML/KYC risk scoring:** Evaluate transaction risk indicators")
-                        create_agent_tab("Agent 5 - Risk", run_agent_5_risk, is_judge=False)
+                        create_agent_tab(
+                            "Agent 5 - Risk", 
+                            run_agent_5_risk, 
+                            is_judge=False,
+                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+                        )
             
             with gr.TabItem("Judge (70B)"):
                 create_agent_tab("Agent 6", run_agent_6, is_judge=True)
