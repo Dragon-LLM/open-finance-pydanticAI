@@ -447,12 +447,16 @@ def wake_up_koyeb() -> Tuple[str, str]:
         return get_status_html(), f"❌ Wake-up failed: {message}. Try again in a few seconds."
 
 
-def is_backend_ready(agent_name: str) -> Tuple[bool, str]:
-    """Check if the backend for an agent is ready with detailed diagnostics."""
+def is_backend_ready(agent_name: str, endpoint: str | None = None) -> Tuple[bool, str]:
+    """Check if the backend for an agent is ready with detailed diagnostics.
+
+    If an endpoint is provided, only that backend is considered. This avoids
+    blocking Ollama/HF usage when Koyeb is offline.
+    """
     settings = Settings()
     
-    # Judge uses LLM Pro
-    if "Judge" in agent_name or agent_name == "Agent 6":
+    # Judge uses LLM Pro (or explicit llm_pro_finance endpoint)
+    if endpoint == "llm_pro_finance" or "Judge" in agent_name or agent_name == "Agent 6":
         url = settings.llm_pro_finance_url or ENDPOINTS.get("llm_pro_finance", {}).get("url", "")
         if not url:
             return False, "LLM Pro Finance URL not configured. Set LLM_PRO_FINANCE_URL in .env"
@@ -474,6 +478,43 @@ def is_backend_ready(agent_name: str) -> Tuple[bool, str]:
             return True, ""
         else:
             return False, f"LLM Pro Finance server not available at {url}. Check if the service is running."
+    
+    # Specific endpoint checks
+    if endpoint == "ollama":
+        ollama_url = ENDPOINTS.get("ollama", {}).get("url", "")
+        if not ollama_url:
+            return False, "Ollama URL not configured."
+        if not settings.ollama_model:
+            return False, "OLLAMA_MODEL not set. Configure it in config.py or env."
+        ok, status = check_server_health("ollama", ollama_url, timeout=5.0)
+        if ok:
+            return True, ""
+        return False, f"Ollama is {status or 'offline'} at {ollama_url}"
+    
+    if endpoint == "hf":
+        hf_url = ENDPOINTS.get("hf", {}).get("url", "")
+        if not hf_url:
+            return False, "HuggingFace URL not configured."
+        ok, status = check_server_health("hf", hf_url, timeout=5.0)
+        if ok:
+            return True, ""
+        return False, f"HuggingFace is {status or 'offline'} at {hf_url}"
+    
+    if endpoint == "koyeb":
+        koyeb_url = ENDPOINTS.get("koyeb", {}).get("url", "")
+        if not koyeb_url:
+            return False, "Koyeb URL not configured."
+        ready, status = check_server_health("koyeb", koyeb_url, timeout=5.0)
+        
+        if not ready and status == "sleeping":
+            wake_success, _ = wake_up_koyeb_service(koyeb_url)
+            if wake_success:
+                import time
+                time.sleep(3)
+                ready, status = check_server_health("koyeb", koyeb_url, timeout=10.0)
+        if ready:
+            return True, ""
+        return False, f"Koyeb is {status or 'offline'} at {koyeb_url}"
     
     # Other agents: Prefer Koyeb when available, fallback to HF
     koyeb_url = ENDPOINTS.get("koyeb", {}).get("url", "")
@@ -773,12 +814,16 @@ def format_compliance_html(review: Dict[str, Any]) -> str:
 # AGENT EXECUTION
 # ============================================================================
 
-async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str = "Agent", timeout_seconds: float = 60.0):
+async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str = "Agent", endpoint: str | None = None, timeout_seconds: float = 60.0):
     """Run an agent asynchronously and return results with tool usage."""
+    # Increase timeout for Ollama (local models are slower)
+    if endpoint == "ollama":
+        timeout_seconds = max(timeout_seconds, 120.0)
+    
     start_time = time.time()
     
     # Check backend
-    ready, msg = is_backend_ready(agent_name)
+    ready, msg = is_backend_ready(agent_name, endpoint)
     if not ready:
         return {"error": msg}, None, 0, {}
     
@@ -821,13 +866,13 @@ async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str
         return {"error": error_msg}, None, elapsed, {}
 
 
-def execute_agent(agent, prompt: str, output_model, agent_name: str):
+def execute_agent(agent, prompt: str, output_model, agent_name: str, endpoint: str | None = None):
     """Synchronous wrapper for agent execution."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         output, usage, elapsed, tool_info = loop.run_until_complete(
-            run_agent_async(agent, prompt, output_model, agent_name)
+            run_agent_async(agent, prompt, output_model, agent_name, endpoint)
         )
         return output, usage, elapsed, tool_info
     finally:
@@ -926,19 +971,38 @@ def run_agent_1(prompt: str, endpoint: str = "koyeb"):
     
     # Create agent dynamically with selected endpoint
     model = get_model_for_endpoint(endpoint)
-    agent = Agent(
-        model,
-        model_settings=ModelSettings(max_output_tokens=600),
-        system_prompt="""Expert analyse financière. Extrais données portfolios boursiers.
+    
+    # Adjust system prompt and settings for Ollama (needs explicit JSON format instruction)
+    if endpoint == "ollama":
+        system_prompt = """Expert analyse financière. Extrais données portfolios boursiers.
 Règles: Identifie symbole, quantité, prix_achat, date_achat pour chaque position.
 CALCUL CRITIQUE: Calculez valeur_totale en additionnant TOUS les produits (quantité × prix_achat) pour chaque position.
 Formule: valeur_totale = Σ(quantité × prix_achat) pour toutes les positions.
 Vérifiez que vous additionnez bien TOUTES les positions avant de donner la valeur totale.
-Répondez avec un objet Portfolio structuré.""",
+
+IMPORTANT: Répondez UNIQUEMENT en format JSON valide, sans texte supplémentaire, sans markdown, sans code blocks. Le JSON doit correspondre exactement au schéma Portfolio avec les champs: positions (liste d'objets avec symbole, quantite, prix_achat, date_achat), valeur_totale (nombre), date_evaluation (string au format YYYY-MM-DD). Chaque position doit avoir: symbole (string), quantite (integer), prix_achat (float), date_achat (string YYYY-MM-DD)."""
+        max_tokens = 1000  # Ollama needs more tokens
+    else:
+        system_prompt = """Expert analyse financière. Extrais données portfolios boursiers.
+Règles: Identifie symbole, quantité, prix_achat, date_achat pour chaque position.
+CALCUL CRITIQUE: Calculez valeur_totale en additionnant TOUS les produits (quantité × prix_achat) pour chaque position.
+Formule: valeur_totale = Σ(quantité × prix_achat) pour toutes les positions.
+Vérifiez que vous additionnez bien TOUTES les positions avant de donner la valeur totale.
+Répondez avec un objet Portfolio structuré."""
+        max_tokens = 600
+    
+    # Increase retries for Ollama (more lenient with JSON parsing)
+    retries = 2 if endpoint == "ollama" else 1
+    
+    agent = Agent(
+        model,
+        model_settings=ModelSettings(max_output_tokens=max_tokens),
+        system_prompt=system_prompt,
         output_type=Portfolio,
+        retries=retries,
     )
     
-    output, usage, elapsed, tool_info = execute_agent(agent, prompt, Portfolio, "Agent 1")
+    output, usage, elapsed, tool_info = execute_agent(agent, prompt, Portfolio, "Agent 1", endpoint)
     
     if isinstance(output, dict) and "error" in output:
         return output["error"], "", "", "Error"
@@ -976,7 +1040,7 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
             "", "", "Error"
         )
     
-    ready, msg = is_backend_ready("Agent 2")
+    ready, msg = is_backend_ready("Agent 2", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
@@ -992,16 +1056,21 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
             # Create agent with selected endpoint
             model = get_model_for_endpoint(endpoint)
             tool = select_tool_from_question(prompt)
+            # Adjust retries and tokens for Ollama
+            retries = 2 if endpoint == "ollama" else 0
+            max_tokens = 400 if endpoint == "ollama" else 200
+            system_prompt = "Calc. 1x outil. JSON. Répondez UNIQUEMENT en JSON valide, sans markdown, sans code blocks." if endpoint == "ollama" else "Calc. 1x outil. JSON."
+            
             agent = Agent(
                 model,
                 model_settings=ModelSettings(
-                    max_output_tokens=200,
+                    max_output_tokens=max_tokens,
                     temperature=0.0,
                 ),
-                system_prompt="Calc. 1x outil. JSON.",
+                system_prompt=system_prompt,
                 tools=[tool],
                 output_type=FinancialCalculationResult,
-                retries=0,
+                retries=retries,
             )
             result = loop.run_until_complete(agent.run(prompt))
             elapsed = time.time() - start
@@ -1143,7 +1212,7 @@ def run_agent_3(prompt: str, endpoint: str = "koyeb"):
             "", "", "Error"
         )
     
-    ready, msg = is_backend_ready("Agent 3")
+    ready, msg = is_backend_ready("Agent 3", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
@@ -1244,7 +1313,7 @@ def run_agent_4(prompt: str, endpoint: str = "koyeb"):
     from pydantic_ai import Agent, ModelSettings, Tool
     import time
     
-    ready, msg = is_backend_ready("Agent 4")
+    ready, msg = is_backend_ready("Agent 4", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
@@ -1467,7 +1536,7 @@ Répondez en français avec les messages convertis."""
         asyncio.set_event_loop(loop)
         try:
             output, usage, elapsed, tool_info = loop.run_until_complete(
-                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Convert", timeout_seconds=120.0)
+                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Convert", endpoint, timeout_seconds=120.0)
             )
         finally:
             loop.close()
@@ -1587,7 +1656,7 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
             if actual_endpoint == "unknown":
                 actual_endpoint = f"{endpoint} (fallback to default)"
     
-    output, usage, elapsed, tool_info = execute_agent(dynamic_agent, prompt, None, "Agent 5 - Validate")
+    output, usage, elapsed, tool_info = execute_agent(dynamic_agent, prompt, None, "Agent 5 - Validate", endpoint)
     
     if isinstance(output, dict) and "error" in output:
         return output["error"], "", "", "Error"
@@ -1718,7 +1787,7 @@ Répondez avec un objet RiskScore structuré incluant:
         asyncio.set_event_loop(loop)
         try:
             output, usage, elapsed, tool_info = loop.run_until_complete(
-                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Risk", timeout_seconds=120.0)
+                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Risk", endpoint, timeout_seconds=120.0)
             )
         finally:
             loop.close()
@@ -1765,7 +1834,7 @@ def run_agent_6(prompt: str):
         return debug_msg, "", "", "No data"
     
     # Check backend
-    ready, msg = is_backend_ready("Agent 6")
+    ready, msg = is_backend_ready("Agent 6", "llm_pro_finance")
     if not ready:
         return msg, "", "", "Error"
     
@@ -1900,12 +1969,12 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
                             preview = ", ".join(local_models)
                             if total_local > len(local_models):
                                 preview += ", ..."
-                            label = f\"Ollama (set OLLAMA_MODEL, e.g., {preview})\"
+                            label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
                         else:
-                            label = \"Ollama (set OLLAMA_MODEL)\"
-                        endpoint_choices.append((label, \"ollama\"))
+                            label = "Ollama (set OLLAMA_MODEL)"
+                        endpoint_choices.append((label, "ollama"))
                     else:
-                        endpoint_choices.append((f\"Ollama ({ollama_settings.ollama_model})\", \"ollama\"))
+                        endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
                 
                 # LLM Pro
                 if "llm_pro_finance" not in exclude_list:
