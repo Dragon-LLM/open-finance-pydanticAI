@@ -122,6 +122,7 @@ AGENT_INFO = {
         "default_input": """Convertis ce SWIFT MT103 vers ISO 20022:
 
 {1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
 {4:
 :20:REF123
 :32A:240101EUR1000,00
@@ -137,9 +138,14 @@ Pour la direction inverse (ISO→SWIFT), fournis un XML ISO 20022 et demande la 
         "title": "Message Validation",
         "description": "Validates SWIFT MT and ISO 20022 message structure, format, and required fields",
         "default_input": """{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
 {4:
 :20:REF123
 :32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
 -}""",
     },
     "Agent 5 - Risk": {
@@ -1463,8 +1469,14 @@ RÈGLES ABSOLUES:
         loop.close()
 
 
-def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
-    """Run Agent 5 - Message Conversion."""
+def run_agent_5_convert(prompt: str, endpoint: str = "koyeb", direction: str = "swift_to_iso"):
+    """Run Agent 5 - Message Conversion.
+    
+    Args:
+        prompt: User input prompt
+        endpoint: Model endpoint to use
+        direction: Conversion direction - "swift_to_iso" or "iso_to_swift"
+    """
     # Check if endpoint is disabled for this agent
     if endpoint == "llm_pro_finance":
         return (
@@ -1491,7 +1503,13 @@ def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
             
             # Get model_settings (it's a dict, convert to ModelSettings)
             model_settings_dict = agent_5.model_settings if hasattr(agent_5, 'model_settings') else {}
-            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else None
+            # Adjust for Ollama: more tokens and retries
+            if endpoint == "ollama":
+                model_settings_dict = {**model_settings_dict, "max_output_tokens": 3000}
+                retries = 2
+            else:
+                retries = 1
+            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else ModelSettings(max_output_tokens=3000)
             
             # Get system prompt - try to extract from instructions or use the agent's method
             # Since system_prompt is a method that returns a function, we'll need to import it
@@ -1503,36 +1521,137 @@ def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
             )
             from pydantic_ai import Tool
             
-            system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
+            # Ollama-specific prompt: needs explicit instructions to not modify XML/SWIFT messages
+            if endpoint == "ollama":
+                system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
 
-RÈGLES ABSOLUES POUR LES CONVERSIONS:
-⚠️  OBLIGATOIRE: Pour TOUTE conversion, utilisez UNIQUEMENT les outils de conversion dédiés:
-1. SWIFT → ISO 20022: VOUS DEVEZ utiliser convertir_swift_vers_iso20022 (PAS parser + generer)
-2. ISO 20022 → SWIFT: VOUS DEVEZ utiliser convertir_iso20022_vers_swift (PAS parser + generer)
+⚠️ RÈGLE CRITIQUE - NE PAS MODIFIER LES MESSAGES:
+- Passez les messages SWIFT et XML EXACTEMENT tels quels aux outils
+- NE PAS ajouter de markdown, de code blocks, ou de formatage
+- NE PAS modifier le contenu XML (garder <?xml version="1.0" intact)
+- NE PAS reformater les messages SWIFT
 
-❌ NE PAS utiliser parser_swift_mt + generer_iso20022 pour convertir
-❌ NE PAS utiliser parser_iso20022 + generer_swift_mt pour convertir
-✅ UTILISEZ UNIQUEMENT les outils convertir_* pour les conversions
+⚠️ RÈGLE CRITIQUE - STRUCTURE DE RÉPONSE OBLIGATOIRE:
 
-VALIDATION OBLIGATOIRE:
-- Vérifiez que le message converti contient TOUS les champs requis
-- Validez l'entrée avant conversion en utilisant validate_swift_message ou validate_iso20022_message
-- Assurez-vous que le message ISO 20022 généré est complet avec tous les éléments requis (GrpHdr, PmtInf, Dbtr, Cdtr, InstdAmt, etc.)
+Votre réponse DOIT suivre exactement cette structure:
 
-OUTILS AUXILIAIRES (uniquement pour analyse, PAS pour conversion):
-- parser_swift_mt: Pour analyser un message SWIFT (pas pour conversion)
-- parser_iso20022: Pour analyser un message ISO 20022 (pas pour conversion)
-- generer_swift_mt: Pour générer un message SWIFT depuis zéro (pas pour conversion)
-- generer_iso20022: Pour générer un message ISO 20022 depuis zéro (pas pour conversion)
-- validate_swift_message: Pour valider la structure d'un message SWIFT
-- validate_iso20022_message: Pour valider la structure d'un message ISO 20022
+1. D'abord, appeler l'outil de conversion avec le message EXACT de l'utilisateur
+2. Ensuite, AFFICHER la réponse complète de l'outil en format JSON brut
+3. Enfin, expliquer le résultat
 
-FORMATS SUPPORTÉS:
-- SWIFT MT103 (Customer Payment) ↔ ISO 20022 pacs.008 (Customer Credit Transfer)
+EXEMPLE DE BONNE RÉPONSE:
 
-ACTION REQUISE: Quand on vous demande de convertir, appelez DIRECTEMENT convertir_swift_vers_iso20022 ou convertir_iso20022_vers_swift.
-Vérifiez que le message converti contient TOUS les champs requis. Validez l'entrée avant conversion.
-Répondez en français avec les messages convertis."""
+"J'appelle l'outil de conversion avec votre message SWIFT...
+
+**Réponse de l'outil:**
+```json
+{
+  "success": false,
+  "error": "SWIFT message validation failed",
+  "validation_errors": [
+    "Block 4 (Text Block) is missing or invalid"
+  ],
+  "validation_warnings": []
+}
+```
+
+**Analyse:**
+L'outil indique que le Block 4 (Text Block) est manquant ou invalide.
+
+**Message SWIFT MT103 complet et correct:**
+```
+{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
+-}
+```
+
+Note: Block 4 se termine par `-}` sur une ligne séparée."
+
+❌ NE PAS FAIRE:
+- Modifier les messages XML ou SWIFT avant de les passer aux outils
+- Ajouter du formatage markdown aux messages
+- Résumer la réponse de l'outil sans la montrer
+- Dire "L'outil a déterminé..." sans montrer le JSON
+
+✅ TOUJOURS FAIRE:
+- Passer les messages EXACTEMENT tels quels aux outils
+- Appeler l'outil
+- Afficher le JSON complet de la réponse
+- Puis expliquer
+
+OUTILS:
+- convertir_swift_vers_iso20022(swift_message: str) - Passez le message SWIFT brut, sans formatage
+- convertir_iso20022_vers_swift(iso20022_xml: str) - Passez le XML brut, sans formatage
+
+ACTION: Appelez l'outil avec le message EXACT de l'utilisateur et AFFICHEZ sa réponse JSON complète."""
+            else:
+                system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
+
+⚠️ RÈGLE CRITIQUE - STRUCTURE DE RÉPONSE OBLIGATOIRE:
+
+Votre réponse DOIT suivre exactement cette structure:
+
+1. D'abord, appeler l'outil de conversion
+2. Ensuite, AFFICHER la réponse complète de l'outil en format JSON
+3. Enfin, expliquer le résultat
+
+EXEMPLE DE BONNE RÉPONSE:
+
+"J'appelle l'outil de conversion avec votre message SWIFT...
+
+**Réponse de l'outil:**
+```json
+{
+  "success": false,
+  "error": "SWIFT message validation failed",
+  "validation_errors": [
+    "Block 4 (Text Block) is missing or invalid"
+  ],
+  "validation_warnings": []
+}
+```
+
+**Analyse:**
+L'outil indique que le Block 4 (Text Block) est manquant ou invalide.
+
+**Message SWIFT MT103 complet et correct:**
+```
+{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
+-}
+```
+
+Note: Block 4 se termine par `-}` sur une ligne séparée."
+
+❌ NE PAS FAIRE:
+- Résumer la réponse de l'outil sans la montrer
+- Dire "L'outil a déterminé..." sans montrer le JSON
+- Expliquer avant d'avoir montré la réponse de l'outil
+
+✅ TOUJOURS FAIRE:
+- Appeler l'outil
+- Afficher le JSON complet de la réponse
+- Puis expliquer
+
+OUTILS:
+- convertir_swift_vers_iso20022(swift_message: str) → Retourne un dict avec success, error, validation_errors, ou iso20022_xml
+- convertir_iso20022_vers_swift(iso20022_xml: str) → Retourne un dict avec success, error, ou swift_message
+
+ACTION: Appelez l'outil et AFFICHEZ sa réponse JSON complète avant d'expliquer."""
             
             # Get tools from _function_toolset
             tools = []
@@ -1565,6 +1684,7 @@ Répondez en français avec les messages convertis."""
                     system_prompt=system_prompt,
                     tools=tools,
                     output_type=output_type,
+                    retries=retries if 'retries' in locals() else 1,
                 )
             else:
                 raise AttributeError("Could not access required agent configuration")
@@ -1579,12 +1699,19 @@ Répondez en français avec les messages convertis."""
                 if actual_endpoint == "unknown":
                     actual_endpoint = f"{endpoint} (fallback to default)"
         
+        # Enhance prompt with direction hint if not already clear
+        enhanced_prompt = prompt
+        if direction == "swift_to_iso" and "iso" not in prompt.lower() and "swift" in prompt.lower():
+            enhanced_prompt = f"Convertis ce message SWIFT MT vers ISO 20022:\n\n{prompt}"
+        elif direction == "iso_to_swift" and "swift" not in prompt.lower() and ("iso" in prompt.lower() or "xml" in prompt.lower() or "<" in prompt):
+            enhanced_prompt = f"Convertis ce message ISO 20022 vers SWIFT MT:\n\n{prompt}"
+        
         # Agent 5 operations can be complex - use longer timeout (120s)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             output, usage, elapsed, tool_info = loop.run_until_complete(
-                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Convert", endpoint, timeout_seconds=120.0)
+                run_agent_async(dynamic_agent, enhanced_prompt, None, "Agent 5 - Convert", endpoint, timeout_seconds=120.0)
             )
         finally:
             loop.close()
@@ -1970,10 +2097,12 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
     
     with gr.Row():
         with gr.Column(scale=1):
+            # Use more lines for Agent 5 tabs (SWIFT/ISO messages can be long)
+            input_lines = 12 if "Agent 5" in agent_key else 4
             input_text = gr.Textbox(
                 label="Input",
                 value=info["default_input"],
-                lines=4,
+                lines=input_lines,
                 placeholder="Enter your prompt...",
                 container=False
             )
@@ -2076,6 +2205,175 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
         run_btn.click(fn=run_fn, inputs=[input_text, endpoint_selector], outputs=[parsed_output, json_output, metrics, status])
 
 
+def create_agent_5_convert_tab():
+    """Create a custom tab for Agent 5 Convert with direction toggle."""
+    info = AGENT_INFO["Agent 5 - Convert"]
+    
+    gr.Markdown(f"### {info['title']}")
+    gr.Markdown(f"*{info['description']}*", elem_classes=["compact"])
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            # Direction toggle
+            direction_selector = gr.Radio(
+                choices=[
+                    ("SWIFT MT → ISO 20022", "swift_to_iso"),
+                    ("ISO 20022 → SWIFT MT", "iso_to_swift")
+                ],
+                value="swift_to_iso",
+                label="Conversion Direction",
+                container=False,
+                show_label=True,
+            )
+            
+            # Input textbox with more lines for SWIFT/ISO messages
+            input_text = gr.Textbox(
+                label="Input",
+                value=info["default_input"],
+                lines=12,
+                placeholder="Enter SWIFT message or ISO 20022 XML...",
+                container=False
+            )
+            
+            # Update input based on direction
+            def update_input_for_direction(direction):
+                if direction == "swift_to_iso":
+                    return """Convertis ce SWIFT MT103 vers ISO 20022:
+
+{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
+-}"""
+                else:
+                    return """Convertis ce message ISO 20022 vers SWIFT MT103:
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12">
+<CstmrCdtTrfInitn>
+<GrpHdr>
+<MsgId>MSG123456789</MsgId>
+<CreDtTm>2024-01-01T12:00:00</CreDtTm>
+<NbOfTxs>1</NbOfTxs>
+</GrpHdr>
+<PmtInf>
+<PmtInfId>PMT001</PmtInfId>
+<PmtMtd>TRF</PmtMtd>
+<ReqdExctnDt>2024-01-01</ReqdExctnDt>
+<Dbtr>
+<Nm>COMPAGNIE ABC</Nm>
+<PstlAdr>
+<Ctry>FR</Ctry>
+</PstlAdr>
+</Dbtr>
+<DbtrAcct>
+<Id>
+<IBAN>FR1420041010050500013M02606</IBAN>
+</Id>
+</DbtrAcct>
+<CdtTrfTxInf>
+<PmtId>
+<EndToEndId>REF123</EndToEndId>
+</PmtId>
+<InstdAmt Ccy="EUR">1000.00</InstdAmt>
+<Cdtr>
+<Nm>COMPAGNIE XYZ</Nm>
+<PstlAdr>
+<Ctry>DE</Ctry>
+</PstlAdr>
+</Cdtr>
+<CdtrAcct>
+<Id>
+<IBAN>DE89370400440532013000</IBAN>
+</Id>
+</CdtrAcct>
+</CdtTrfTxInf>
+</PmtInf>
+</CstmrCdtTrfInitn>
+</Document>"""
+            
+            direction_selector.change(
+                fn=update_input_for_direction,
+                inputs=[direction_selector],
+                outputs=[input_text]
+            )
+            
+            # Endpoint selector (reuse logic from create_agent_tab)
+            exclude_list = []
+            disabled_dict = {"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+            available_endpoints = get_available_endpoints(include_llm_pro=True)
+            
+            endpoint_choices = []
+            disabled_notes = []
+            
+            if "koyeb" not in exclude_list:
+                if "koyeb" in disabled_dict:
+                    disabled_notes.append(f"Koyeb ({disabled_dict['koyeb']})")
+                else:
+                    endpoint_choices.append(("Koyeb", "koyeb"))
+            
+            if "hf" not in exclude_list:
+                if "hf" in disabled_dict:
+                    disabled_notes.append(f"HuggingFace ({disabled_dict['hf']})")
+                else:
+                    endpoint_choices.append(("HuggingFace", "hf"))
+            
+            if "ollama" not in exclude_list:
+                ollama_settings = Settings()
+                if "ollama" in disabled_dict:
+                    disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
+                elif not ollama_settings.ollama_model:
+                    local_models, total_local = get_local_ollama_models()
+                    if local_models:
+                        preview = ", ".join(local_models)
+                        if total_local > len(local_models):
+                            preview += ", ..."
+                        label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
+                    else:
+                        label = "Ollama (set OLLAMA_MODEL)"
+                    endpoint_choices.append((label, "ollama"))
+                else:
+                    endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
+            
+            default_endpoint = "koyeb" if any(v == "koyeb" for _, v in endpoint_choices) else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
+            
+            endpoint_selector = gr.Dropdown(
+                choices=endpoint_choices,
+                value=default_endpoint,
+                label="Endpoint (default: Koyeb)",
+                scale=1,
+                container=False,
+                show_label=True,
+            )
+            
+            if disabled_notes:
+                gr.Markdown(
+                    f"*Unavailable: {', '.join(disabled_notes)}*",
+                    elem_classes=["compact"],
+                )
+            
+            with gr.Row():
+                run_btn = gr.Button("Run", variant="primary", scale=1, size="sm")
+                status = gr.Textbox(label="", interactive=False, value="Ready", scale=4, container=False, show_label=False)
+            metrics = gr.HTML(value="<div style='padding: 4px; color: #9ca3af; font-size: 11px;'>Run agent to see metrics</div>", visible=True, container=False)
+        
+        with gr.Column(scale=2):
+            parsed_output = gr.Markdown(label="Result", value="*Run agent to see results*")
+            json_output = gr.Code(label="JSON Output (Full Data)", language="json", lines=10)
+    
+    # Connect run button with direction parameter
+    run_btn.click(
+        fn=run_agent_5_convert,
+        inputs=[input_text, endpoint_selector, direction_selector],
+        outputs=[parsed_output, json_output, metrics, status]
+    )
+
+
 def create_interface():
     with gr.Blocks(title="Open Finance AI") as app:
         
@@ -2135,12 +2433,7 @@ def create_interface():
                 with gr.Tabs():
                     with gr.TabItem("Convert"):
                         gr.Markdown("**Bidirectional conversion:** SWIFT MT ↔ ISO 20022 XML")
-                        create_agent_tab(
-                            "Agent 5 - Convert", 
-                            run_agent_5_convert, 
-                            is_judge=False,
-                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
-                        )
+                        create_agent_5_convert_tab()
                     
                     with gr.TabItem("Validate"):
                         gr.Markdown("**Message validation:** Check structure, format, and required fields")
