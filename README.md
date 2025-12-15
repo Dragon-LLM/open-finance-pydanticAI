@@ -199,6 +199,23 @@ Results saved to `examples/evaluate_all_agents_results.json` with:
 
 ## Model Deployment
 
+Requires a running model instance. Deploy `DragonLLM/Qwen-Open-Finance-R-8B` on:
+- **Koyeb** (recommended) - vLLM backend
+- **Hugging Face Spaces** - TGI backend
+- **Ollama** (local) - For local quantized models
+- Any OpenAI-compatible API endpoint
+
+See [simple-llm-pro-finance](https://github.com/DealExMachina/simple-llm-pro-finance) for deployment instructions.
+
+### Using Ollama (Local)
+
+Ollama allows you to run quantized models locally with full tool calling support. You can use locally downloaded models without pulling from the Ollama registry.
+
+**Note**: This project uses the [`pydanticai-ollama`](https://pypi.org/project/pydanticai-ollama/) package for native Ollama integration, which provides proper message formatting and avoids compatibility issues with Ollama's API.
+
+**Setup**:
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
 Requires deployment of `DragonLLM/Qwen-Open-Finance-R-8B` on an OpenAI-compatible endpoint. See [simple-llm-pro-finance](https://github.com/DealExMachina/simple-llm-pro-finance) for deployment instructions.
 
 ### Ollama Setup

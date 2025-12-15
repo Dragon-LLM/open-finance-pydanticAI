@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     llm_pro_finance_url: str = ""
     
     # Ollama local model configuration
-    ollama_model: str = ""  # Model name to use (e.g., "dragon-llm", "qwen2.5:7b")
+    ollama_model: str = "qwen2.5:3b-instruct"  # Model name to use (e.g., "dragon-llm", "qwen2.5:7b", "ministral-3:14b-instruct-2512-q4_K_M")
     
     # Validators to strip quotes from env values
     @field_validator('llm_pro_finance_key', 'llm_pro_finance_url', 'api_key', 'ollama_model', mode='before')
