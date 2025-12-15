@@ -9,7 +9,7 @@ description = "Open Finance API using PydanticAI"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "pydantic-ai>=0.0.1",
+    "pydantic-ai>=1.18.0",
     "openai>=1.0.0",
     "fastapi>=0.104.0",
     "uvicorn[standard]>=0.24.0",
@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=2.0.0",
     "scipy>=1.10.0",
     "logfire>=0.0.1",
+    "gradio>=4.0.0",
 ]
 
 [project.optional-dependencies]

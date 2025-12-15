@@ -42,7 +42,9 @@ agent_1 = Agent(
     model_settings=ModelSettings(max_output_tokens=600),
     system_prompt="""Expert analyse financière. Extrais données portfolios boursiers.
 Règles: Identifie symbole, quantité, prix_achat, date_achat pour chaque position.
-Calcule valeur_totale = somme(quantité × prix_achat).
+CALCUL CRITIQUE: Calculez valeur_totale en additionnant TOUS les produits (quantité × prix_achat) pour chaque position.
+Formule: valeur_totale = Σ(quantité × prix_achat) pour toutes les positions.
+Vérifiez que vous additionnez bien TOUTES les positions avant de donner la valeur totale.
 Répondez avec un objet Portfolio structuré.""",
     output_type=Portfolio,
 )
@@ -91,7 +93,9 @@ async def exemple_extraction_portfolio():
         print(f"  - Nombre de positions: {len(portfolio.positions)}")
         print(f"  - Valeur totale (calculée): {calculated_total:,.2f}€")
         if abs(portfolio.valeur_totale - calculated_total) > 1:
-            print(f"  - Valeur totale (modèle): {portfolio.valeur_totale:,.2f}€ ⚠️ (erreur arithmétique)")
+            print(f"  - Valeur totale (modèle): {portfolio.valeur_totale:,.2f}€ ⚠️ (erreur arithmétique détectée)")
+            print(f"  - Différence: {abs(portfolio.valeur_totale - calculated_total):,.2f}€")
+            print(f"  - ATTENTION: Le modèle a calculé incorrectement. Utilisation de la valeur calculée.")
         print(f"  - Date d'évaluation: {portfolio.date_evaluation}")
         print(f"\n📊 Détails des positions:")
         for i, pos in enumerate(portfolio.positions, 1):

@@ -63,6 +63,9 @@ dmypy.json
 *.sqlite
 *.db
 
+# Tests
+tests/
+
 # OS
 .DS_Store
 Thumbs.db

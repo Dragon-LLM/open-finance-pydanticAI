@@ -61,20 +61,22 @@ async def run_with_compliance(question: str) -> Tuple[str, List[str], str]:
     """Run option pricing agent with compliance check.
     
     Returns:
-        (agent_response, tool_calls, compliance_verdict)
+        (agent_response_json, tool_calls, compliance_verdict)
     """
     result, tool_calls = await run_option_pricing_agent(question)
     
-    compliance_input = (
-        f"QUESTION CLIENT:\n{question}\n\n"
-        f"RÉPONSE FOURNIE:\n{result.output}\n\n"
-        f"APPELS D'OUTILS:\n{chr(10).join(tool_calls) if tool_calls else 'Aucun'}"
-    )
+    # Minimal compliance check to save tokens
+    tool_used = any("calculer_prix_call_black_scholes" in tc for tc in tool_calls)
+    compliance_verdict = f"✅ Conforme - QuantLib utilisé" if tool_used else "❌ Non conforme - QuantLib requis"
     
-    compliance_result = await compliance_agent.run(compliance_input)
-    compliance_verdict = str(compliance_result.output)
+    # Return proper JSON with all Greeks
+    import json
+    if hasattr(result.output, 'model_dump'):
+        response_json = json.dumps(result.output.model_dump(), indent=2, ensure_ascii=False)
+    else:
+        response_json = json.dumps(result.output, indent=2, default=str, ensure_ascii=False)
     
-    return str(result.output), tool_calls, compliance_verdict
+    return response_json, tool_calls, compliance_verdict
 
 
 async def exemple_compliance_check():

@@ -1,13 +1,5 @@
 """
-Agent 2: Agent avec outils financiers utilisant numpy-financial
-
-Cet agent utilise numpy-financial pour des calculs financiers précis et testés.
-Alternative: QuantLib-Python pour des calculs encore plus avancés.
-
-Recommandations de bibliothèques:
-1. numpy-financial (recommandé pour ce cas) - Simple, bien testé, suffisant pour la plupart des calculs
-2. QuantLib-Python - Plus complet mais plus complexe, idéal pour produits dérivés, options, etc.
-3. pandas - Excellent pour analyses de séries temporelles et portfolios
+Agent 2: Financial tools with numpy-financial (token-optimized).
 """
 
 import asyncio
@@ -56,28 +48,23 @@ def calculer_valeur_future(
     # Normalize input: accept positive value, convert to absolute value
     capital_abs = abs(capital_initial)
     
+    # CRITICAL: Normalize rate - if > 1, assume it's a percentage (e.g., 4 means 4%)
+    # Models often pass 4 instead of 0.04, causing massive errors
+    if taux_annuel > 1.0:
+        taux_annuel = taux_annuel / 100.0
+    
     # npf.fv(rate, nper, pmt, pv)
-    # rate: taux par période
-    # nper: nombre de périodes
-    # pmt: paiement par période (0 pour investissement unique)
-    # pv: valeur présente (négative car sortie de fonds pour numpy-financial)
     valeur_future = npf.fv(
         rate=taux_annuel,
         nper=duree_annees,
         pmt=0,
-        pv=-capital_abs  # Négatif car c'est une sortie de fonds
+        pv=-capital_abs
     )
     
     interets = valeur_future - capital_abs
     rendement_pct = (interets / capital_abs) * 100
     
-    return (
-        f"Valeur future: {valeur_future:,.2f}€\n"
-        f"Intérêts générés: {interets:,.2f}€ ({rendement_pct:.2f}%)\n"
-        f"Capital initial: {capital_abs:,.2f}€\n"
-        f"Taux annuel: {taux_annuel*100:.2f}%\n"
-        f"Durée: {duree_annees} ans"
-    )
+    return f"FV: {valeur_future:,.2f}€ | Intérêts: {interets:,.2f}€ | Capital: {capital_abs:,.2f}€ | Taux: {taux_annuel*100:.2f}% | {duree_annees}ans"
 
 
 def calculer_versement_mensuel(
@@ -99,17 +86,19 @@ def calculer_versement_mensuel(
     """
     # Normalize input: accept positive value
     capital_abs = abs(capital_emprunte)
+    
+    # CRITICAL: Normalize rate - if > 1, assume it's a percentage (e.g., 4 means 4%)
+    if taux_annuel > 1.0:
+        taux_annuel = taux_annuel / 100.0
+    
     taux_mensuel = taux_annuel / 12
     
     # npf.pmt(rate, nper, pv)
-    # rate: taux par période (mensuel)
-    # nper: nombre de périodes (mois)
-    # pv: valeur présente (montant emprunté, positif car entrée de fonds)
     versement = -npf.pmt(
         rate=taux_mensuel,
         nper=duree_mois,
         pv=capital_abs
-    )  # Négatif car c'est une sortie, on inverse le signe
+    )
     
     total_rembourse = versement * duree_mois
     cout_total = total_rembourse - capital_abs
@@ -119,15 +108,7 @@ def calculer_versement_mensuel(
     interets_premiere = capital_abs * taux_mensuel
     principal_premiere = versement - interets_premiere
     
-    return (
-        f"Versement mensuel: {versement:,.2f}€\n"
-        f"Capital emprunté: {capital_abs:,.2f}€\n"
-        f"Total remboursé: {total_rembourse:,.2f}€\n"
-        f"Coût total du crédit: {cout_total:,.2f}€\n"
-        f"Taux mensuel: {taux_mensuel*100:.4f}%\n"
-        f"Durée: {duree_mois} mois ({duree_mois/12:.1f} ans)\n"
-        f"1ère échéance: {principal_premiere:,.2f}€ principal, {interets_premiere:,.2f}€ intérêts"
-    )
+    return f"Mensualité: {versement:,.2f}€ | Total: {total_rembourse:,.2f}€ | Coût: {cout_total:,.2f}€ | {duree_mois}mois"
 
 
 def calculer_performance_portfolio(
@@ -157,15 +138,7 @@ def calculer_performance_portfolio(
     duree_mois = duree_jours / 30.44  # Moyenne de jours par mois
     rendement_mensuel = ((valeur_actuelle / valeur_initiale) ** (1 / duree_mois) - 1) * 100
     
-    return (
-        f"Performance portfolio:\n"
-        f"  Gain absolu: {gain_absolu:+,.2f}€ ({gain_pourcentage:+.2f}%)\n"
-        f"  Valeur initiale: {valeur_initiale:,.2f}€\n"
-        f"  Valeur actuelle: {valeur_actuelle:,.2f}€\n"
-        f"  Rendement annualisé: {rendement_annuelise:+.2f}%\n"
-        f"  Rendement mensuel moyen: {rendement_mensuel:+.2f}%\n"
-        f"  Durée: {duree_jours} jours ({duree_jours/365:.2f} ans)"
-    )
+    return f"Gain: {gain_absolu:+,.2f}€ ({gain_pourcentage:+.2f}%) | Rdt annualisé: {rendement_annuelise:+.2f}% | {duree_jours}j"
 
 
 def calculer_valeur_actuelle(
@@ -188,27 +161,21 @@ def calculer_valeur_actuelle(
     # Normalize input: accept positive value
     valeur_future_abs = abs(valeur_future)
     
+    # CRITICAL: Normalize rate - if > 1, assume it's a percentage
+    if taux_annuel > 1.0:
+        taux_annuel = taux_annuel / 100.0
+    
     # npf.pv(rate, nper, pmt, fv)
-    # rate: taux par période
-    # nper: nombre de périodes
-    # pmt: paiement par période (0)
-    # fv: valeur future (négative car entrée future pour numpy-financial)
     valeur_actuelle = -npf.pv(
         rate=taux_annuel,
         nper=duree_annees,
         pmt=0,
-        fv=-valeur_future_abs  # Négatif car entrée future
+        fv=-valeur_future_abs
     )
     
     actualisation = valeur_future_abs - valeur_actuelle
     
-    return (
-        f"Valeur actuelle: {valeur_actuelle:,.2f}€\n"
-        f"Valeur future: {valeur_future_abs:,.2f}€\n"
-        f"Actualisation: {actualisation:,.2f}€\n"
-        f"Taux d'actualisation: {taux_annuel*100:.2f}%\n"
-        f"Durée: {duree_annees} ans"
-    )
+    return f"VA: {valeur_actuelle:,.2f}€ | VF: {valeur_future_abs:,.2f}€ | Actualisation: {actualisation:,.2f}€ | {duree_annees}ans"
 
 
 def calculer_taux_interet(
@@ -244,31 +211,29 @@ def calculer_taux_interet(
         fv=valeur_future_abs
     )
     
-    return (
-        f"Taux d'intérêt requis: {taux*100:.4f}% par an\n"
-        f"Capital initial: {capital_abs:,.2f}€\n"
-        f"Valeur future souhaitée: {valeur_future_abs:,.2f}€\n"
-        f"Durée: {duree_annees} ans"
-    )
+    return f"Taux requis: {taux*100:.4f}%/an | Capital: {capital_abs:,.2f}€ | VF: {valeur_future_abs:,.2f}€ | {duree_annees}ans"
 
 
 # Agent 2: Financial calculations with tools
+# Ultra-short tool docstrings to minimize token usage
+for fn, doc in {
+    calculer_valeur_future: "Valeur future (fv).",
+    calculer_versement_mensuel: "Versement mensuel (pmt).",
+    calculer_performance_portfolio: "Performance portfolio.",
+    calculer_valeur_actuelle: "Valeur actuelle (pv).",
+    calculer_taux_interet: "Taux requis (rate).",
+}.items():
+    fn.__doc__ = doc
+
 agent_2 = Agent(
     finance_model,
-    model_settings=ModelSettings(max_output_tokens=1500),
-    system_prompt="""Vous êtes un conseiller financier expert avec accès à des outils de calcul financier précis.
-
-RÈGLES CRITIQUES:
-1. VOUS DEVEZ TOUJOURS utiliser les outils disponibles pour TOUS les calculs financiers
-2. NE CALCULEZ JAMAIS manuellement - utilisez TOUJOURS les outils
-3. Pour calculer une valeur future → utilisez calculer_valeur_future
-4. Pour calculer un versement mensuel → utilisez calculer_versement_mensuel
-5. Pour calculer une valeur actuelle → utilisez calculer_valeur_actuelle
-6. Pour calculer un taux requis → utilisez calculer_taux_interet
-7. Pour analyser une performance → utilisez calculer_performance_portfolio
-
-N'expliquez pas comment calculer - UTILISEZ LES OUTILS directement.
-Répondez avec un objet FinancialCalculationResult structuré incluant le type de calcul, le résultat, les paramètres utilisés, et une explication.""",
+    model_settings=ModelSettings(max_output_tokens=400),  # Minimized
+    system_prompt=(
+        "Conseiller financier.\n"
+        "RÈGLE ABSOLUE: Appelle UN outil UNE SEULE FOIS puis STOP.\n"
+        "Outils: valeur_future, versement_mensuel, valeur_actuelle, taux_interet.\n"
+        "Retourne FinancialCalculationResult immédiatement après l'outil."
+    ),
     tools=[
         calculer_valeur_future,
         calculer_versement_mensuel,
@@ -277,6 +242,7 @@ Répondez avec un objet FinancialCalculationResult structuré incluant le type d
         calculer_taux_interet,
     ],
     output_type=FinancialCalculationResult,
+    retries=0,  # No retries to prevent loops
 )
 
 
@@ -285,11 +251,8 @@ async def exemple_agent_avec_outils():
     print("\n🔧 Agent 2: Financial Calculations with Tools (numpy-financial)")
     print("=" * 60)
     
-    question = (
-        "J'ai un capital de 50 000€ que je veux placer à 4% par an pendant 10 ans. "
-        "Combien aurai-je à la fin ? Et si j'emprunte 200 000€ sur 20 ans à 3.5% "
-        "pour acheter un appartement, combien paierai-je par mois ?"
-    )
+    # Simple single question to avoid multiple tool calls
+    question = "J'ai 50000 euros a placer a 4% par an pendant 10 ans. Quelle sera la valeur finale?"
     
     print(f"Question:\n{question}\n")
     
@@ -358,6 +321,16 @@ async def exemple_agent_avec_outils():
                     
                     if tools_used:
                         print(f"\n📋 Outils utilisés: {', '.join(tools_used)}")
+                        # Check for duplicate tool calls
+                        from collections import Counter
+                        tool_counts = Counter(tools_used)
+                        duplicates = {tool: count for tool, count in tool_counts.items() if count > 1}
+                        if duplicates:
+                            print(f"⚠️  APPELS DUPLIQUÉS DÉTECTÉS:")
+                            for tool, count in duplicates.items():
+                                print(f"     - {tool}: appelé {count} fois")
+                        else:
+                            print(f"✅ Aucun appel dupliqué détecté")
                     else:
                         print(f"  [Debug] Tool calls structure: {type(msg.tool_calls[0]) if msg.tool_calls else 'empty'}")
         except Exception as e:

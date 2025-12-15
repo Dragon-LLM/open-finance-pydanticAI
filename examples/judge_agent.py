@@ -52,11 +52,16 @@ judge_agent = Agent(
 Votre rôle est d'analyser de manière rigoureuse les sorties des agents financiers et de fournir des jugements critiques constructifs.
 
 CRITÈRES D'ÉVALUATION:
-1. **Correctness (Exactitude)**: Les résultats sont-ils mathématiquement corrects? Les calculs sont-ils précis?
-2. **Quality (Qualité)**: La sortie est-elle bien structurée? Les données sont-elles complètes et cohérentes?
-3. **Tool Usage (Utilisation d'outils)**: Les outils ont-ils été utilisés correctement? Y a-t-il des calculs manuels non autorisés?
-4. **Compliance (Conformité)**: Les règles de conformité sont-elles respectées?
-5. **Best Practices (Meilleures pratiques)**: Les meilleures pratiques sont-elles suivies?
+1. **Correctness (Exactitude)**: Les résultats sont-ils mathématiquement corrects? Les calculs sont-ils précis? Vérifiez les calculs arithmétiques (ex: sommes, multiplications).
+2. **Quality (Qualité)**: La sortie est-elle bien structurée? Les données sont-elles complètes et cohérentes? Le format de réponse est-il standardisé?
+3. **Tool Usage (Utilisation d'outils)**: 
+   - Les outils ont-ils été utilisés correctement? Y a-t-il des calculs manuels non autorisés?
+   - Y a-t-il des appels d'outils dupliqués? Comptez les appels uniques vs total des appels.
+   - Les outils requis ont-ils été appelés (ex: calculer_rendement_portfolio pour Agent 3)?
+4. **Input Validation (Validation des entrées)**: Les données d'entrée ont-elles été validées? Y a-t-il des vérifications de format, de plage, ou de champs requis?
+5. **Response Format Consistency (Cohérence du format)**: Les formats de réponse sont-ils cohérents entre les agents? Les structures de données sont-elles standardisées?
+6. **Compliance (Conformité)**: Les règles de conformité sont-elles respectées?
+7. **Best Practices (Meilleures pratiques)**: Les meilleures pratiques sont-elles suivies?
 
 STRUCTURE DE VOTRE ÉVALUATION:
 - Identifiez les forces de chaque agent
@@ -120,11 +125,13 @@ SORTIE DE L'AGENT:
         evaluation_prompt += "\n"
     
     evaluation_prompt += """Analysez cette sortie de manière critique:
-1. Vérifiez l'exactitude des calculs et résultats
-2. Évaluez la qualité de la structure et des données
-3. Vérifiez l'utilisation correcte des outils
-4. Identifiez les forces et faiblesses
-5. Proposez des améliorations concrètes"""
+1. Vérifiez l'exactitude des calculs et résultats (vérifiez les calculs arithmétiques)
+2. Évaluez la qualité de la structure et des données (format standardisé?)
+3. Vérifiez l'utilisation correcte des outils (outils requis appelés? appels dupliqués?)
+4. Vérifiez la validation des entrées (données validées avant traitement?)
+5. Vérifiez la cohérence du format de réponse (structure standardisée?)
+6. Identifiez les forces et faiblesses
+7. Proposez des améliorations concrètes"""
 
     result = await judge_agent.run(evaluation_prompt)
     judgment = result.output
@@ -189,8 +196,13 @@ async def judge_all_agents(
         evaluation_prompt += "\n"
     
     evaluation_prompt += """Analysez TOUS ces agents de manière critique et complète:
-1. Évaluez chaque agent individuellement (correctness, quality, tool usage)
-2. Identifiez les problèmes communs à plusieurs agents
+1. Évaluez chaque agent individuellement:
+   - Correctness: Vérifiez les calculs arithmétiques (ex: sommes, multiplications)
+   - Quality: Structure, complétude, format standardisé
+   - Tool Usage: Outils requis appelés? Appels dupliqués? (comptez appels uniques vs total)
+   - Input Validation: Données validées avant traitement?
+   - Response Format: Format cohérent et standardisé?
+2. Identifiez les problèmes communs à plusieurs agents (ex: appels dupliqués, absence de validation, formats non standardisés)
 3. Identifiez les meilleures pratiques observées
 4. Recommandez des améliorations prioritaires pour chaque agent
 5. Fournissez un score global et une évaluation d'ensemble

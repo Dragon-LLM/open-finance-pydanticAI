@@ -35,6 +35,15 @@ class OptionPricingResult(BaseModel):
     theta: float = Field(description="Theta (time decay)")
     input_parameters: Dict[str, Any] = Field(description="Input parameters (spot, strike, maturity, rate, volatility, dividend)")
     calculation_method: str = Field(description="Method used (e.g., 'Black-Scholes')")
+    greeks_explanations: Dict[str, str] = Field(
+        description="Brief explanations for each Greek: delta, gamma, vega, theta",
+        default_factory=lambda: {
+            "delta": "Sensibilité du prix de l'option à une variation de 1€ du prix du sous-jacent",
+            "gamma": "Sensibilité du delta à une variation du prix du sous-jacent (convexité)",
+            "vega": "Sensibilité du prix de l'option à une variation de 1% de la volatilité",
+            "theta": "Décroissance du prix de l'option par jour (décroissance temporelle)"
+        }
+    )
 
 
 # ============================================================================
@@ -139,6 +148,7 @@ RÈGLES ABSOLUES:
 2. JAMAIS de calculs manuels - utilisez TOUJOURS l'outil QuantLib
 3. Pour un call européen → APPELEZ calculer_prix_call_black_scholes avec spot, strike, maturité, taux, volatilité, dividende
 4. Répondez avec un objet OptionPricingResult structuré incluant prix, delta, gamma, vega, theta, paramètres et méthode.
+5. Incluez des explications brèves pour chaque grec (delta, gamma, vega, theta) dans le champ greeks_explanations.
 N'expliquez pas comment calculer - UTILISEZ L'OUTIL directement.""",
     tools=[
         Tool(

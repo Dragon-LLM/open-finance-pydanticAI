@@ -53,6 +53,158 @@ class ISO20022Message(BaseModel):
 
 
 # ============================================================================
+# VALIDATION FUNCTIONS
+# ============================================================================
+
+def validate_swift_message(message: str) -> Dict[str, Any]:
+    """Validate SWIFT MT message structure.
+    
+    Checks for:
+    - Presence of required blocks (1, 2, 4)
+    - Valid block format
+    - Message type consistency
+    
+    Args:
+        message: Raw SWIFT MT message string
+        
+    Returns:
+        Dict with validation result, errors, and warnings
+    """
+    errors = []
+    warnings = []
+    
+    # Check for required blocks
+    if not re.search(r'\{1:[^}]+\}', message):
+        errors.append("Block 1 (Basic Header) is missing or invalid")
+    
+    if not re.search(r'\{2:[^}]+\}', message):
+        errors.append("Block 2 (Application Header) is missing or invalid")
+    
+    if not re.search(r'\{4:[^}]+\}', message):
+        errors.append("Block 4 (Text Block) is missing or invalid")
+    
+    # Check block format
+    block_pattern = r'\{(\d+):([^}]+)\}'
+    blocks = re.findall(block_pattern, message)
+    
+    if not blocks:
+        errors.append("No valid blocks found in message")
+    else:
+        block_numbers = [int(b[0]) for b in blocks]
+        if 1 not in block_numbers:
+            errors.append("Block 1 not found")
+        if 2 not in block_numbers:
+            errors.append("Block 2 not found")
+        if 4 not in block_numbers:
+            errors.append("Block 4 not found")
+    
+    # Check for common field tags in block 4
+    block4_match = re.search(r'\{4:([^}]+)\}', message, re.DOTALL)
+    if block4_match:
+        text_block = block4_match.group(1)
+        required_fields = ["20", "32A"]  # Reference and Value Date/Currency/Amount
+        for field in required_fields:
+            if f":{field}:" not in text_block:
+                warnings.append(f"Field :{field}: (recommended) not found in text block")
+    
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "block_count": len(blocks) if blocks else 0
+    }
+
+
+def validate_iso20022_message(xml_content: str) -> Dict[str, Any]:
+    """Validate ISO 20022 XML message.
+    
+    Checks for:
+    - Valid XML structure
+    - Required root elements
+    - Namespace consistency
+    
+    Args:
+        xml_content: ISO 20022 XML message string
+        
+    Returns:
+        Dict with validation result, errors, and warnings
+    """
+    errors = []
+    warnings = []
+    
+    # Try to parse XML
+    try:
+        root = ET.fromstring(xml_content)
+    except ET.ParseError as e:
+        errors.append(f"Invalid XML structure: {str(e)}")
+        return {
+            "valid": False,
+            "errors": errors,
+            "warnings": warnings
+        }
+    
+    # Check for Document root
+    if root.tag.split('}')[-1] != "Document":
+        warnings.append("Root element is not 'Document' (may be valid for some message types)")
+    
+    # Check for namespace
+    if not root.tag.startswith("{") or "}" not in root.tag:
+        warnings.append("No namespace detected in root element")
+    
+    # Check for required child elements (for pacs.008)
+    children = list(root)
+    if not children:
+        errors.append("No child elements found in Document root")
+    else:
+        first_child = children[0]
+        child_tag = first_child.tag.split('}')[-1]
+        if child_tag not in ["CstmrCdtTrfInitn", "CstmrPmtStsRpt", "BkToCstmrStmt"]:
+            warnings.append(f"Unknown message type: {child_tag}")
+    
+    # Check for required elements in pacs.008
+    if any("CstmrCdtTrfInitn" in str(c.tag) for c in children):
+        # Check for GrpHdr
+        grp_hdr = root.find(".//{*}GrpHdr")
+        if grp_hdr is None:
+            errors.append("GrpHdr (Group Header) is missing")
+        else:
+            # Check for required fields in GrpHdr
+            msg_id = grp_hdr.find(".//{*}MsgId")
+            if msg_id is None or not msg_id.text:
+                errors.append("MsgId (Message ID) is missing in GrpHdr")
+            
+            cre_dt_tm = grp_hdr.find(".//{*}CreDtTm")
+            if cre_dt_tm is None or not cre_dt_tm.text:
+                warnings.append("CreDtTm (Creation DateTime) is missing in GrpHdr")
+        
+        # Check for payment information
+        pmt_inf = root.find(".//{*}PmtInf")
+        if pmt_inf is None:
+            errors.append("PmtInf (Payment Information) is missing")
+        else:
+            # Check for required fields
+            instd_amt = pmt_inf.find(".//{*}InstdAmt")
+            if instd_amt is None:
+                errors.append("InstdAmt (Instructed Amount) is missing")
+            
+            dbtr = pmt_inf.find(".//{*}Dbtr")
+            if dbtr is None:
+                errors.append("Dbtr (Debtor) is missing")
+            
+            cdtr = pmt_inf.find(".//{*}Cdtr")
+            if cdtr is None:
+                errors.append("Cdtr (Creditor) is missing")
+    
+    return {
+        "valid": len(errors) == 0,
+        "errors": errors,
+        "warnings": warnings,
+        "root_element": root.tag.split('}')[-1] if '}' in root.tag else root.tag,
+        "message_type": children[0].tag.split('}')[-1] if children else "unknown"
+    }
+
+
+# ============================================================================
 # SWIFT MT PARSING TOOLS
 # ============================================================================
 
@@ -419,6 +571,16 @@ def convertir_swift_vers_iso20022(swift_message: str) -> Dict[str, Any]:
     Returns:
         Dict with iso20022_xml and conversion_details
     """
+    # Validate SWIFT message first
+    validation = validate_swift_message(swift_message)
+    if not validation["valid"]:
+        return {
+            "success": False,
+            "error": "SWIFT message validation failed",
+            "validation_errors": validation["errors"],
+            "validation_warnings": validation["warnings"]
+        }
+    
     # Parse SWIFT message
     swift_parsed = parser_swift_mt(swift_message)
     
@@ -524,10 +686,14 @@ def convertir_swift_vers_iso20022(swift_message: str) -> Dict[str, Any]:
         execution_date=execution_date
     )
     
+    # Validate generated ISO 20022 message
+    iso_validation = validate_iso20022_message(iso_xml)
+    
     return {
         "success": True,
         "iso20022_xml": iso_xml,
         "swift_parsed": swift_parsed,
+        "iso_validation": iso_validation,
         "conversion_details": {
             "swift_type": message_type,
             "iso_type": "pacs.008",
@@ -538,7 +704,8 @@ def convertir_swift_vers_iso20022(swift_message: str) -> Dict[str, Any]:
                 "debtor": debtor_name,
                 "creditor": creditor_name,
                 "execution_date": execution_date
-            }
+            },
+            "all_fields_included": iso_validation["valid"] and len(iso_validation["errors"]) == 0
         }
     }
 
@@ -654,16 +821,24 @@ RÈGLES ABSOLUES POUR LES CONVERSIONS:
 ❌ NE PAS utiliser parser_iso20022 + generer_swift_mt pour convertir
 ✅ UTILISEZ UNIQUEMENT les outils convertir_* pour les conversions
 
+VALIDATION OBLIGATOIRE:
+- Vérifiez que le message converti contient TOUS les champs requis
+- Validez l'entrée avant conversion en utilisant validate_swift_message ou validate_iso20022_message
+- Assurez-vous que le message ISO 20022 généré est complet avec tous les éléments requis (GrpHdr, PmtInf, Dbtr, Cdtr, InstdAmt, etc.)
+
 OUTILS AUXILIAIRES (uniquement pour analyse, PAS pour conversion):
 - parser_swift_mt: Pour analyser un message SWIFT (pas pour conversion)
 - parser_iso20022: Pour analyser un message ISO 20022 (pas pour conversion)
 - generer_swift_mt: Pour générer un message SWIFT depuis zéro (pas pour conversion)
 - generer_iso20022: Pour générer un message ISO 20022 depuis zéro (pas pour conversion)
+- validate_swift_message: Pour valider la structure d'un message SWIFT
+- validate_iso20022_message: Pour valider la structure d'un message ISO 20022
 
 FORMATS SUPPORTÉS:
 - SWIFT MT103 (Customer Payment) ↔ ISO 20022 pacs.008 (Customer Credit Transfer)
 
 ACTION REQUISE: Quand on vous demande de convertir, appelez DIRECTEMENT convertir_swift_vers_iso20022 ou convertir_iso20022_vers_swift.
+Vérifiez que le message converti contient TOUS les champs requis. Validez l'entrée avant conversion.
 Répondez en français avec les messages convertis.""",
     tools=[
         Tool(
@@ -695,6 +870,16 @@ Répondez en français avec les messages convertis.""",
             convertir_iso20022_vers_swift,
             name="convertir_iso20022_vers_swift",
             description="⚠️ OBLIGATOIRE pour convertir ISO 20022 → SWIFT MT. Utilisez CET outil pour toutes les conversions ISO vers SWIFT. Fournissez le contenu XML complet. Supporte pacs.008 → MT103. NE PAS utiliser parser + generer pour convertir.",
+        ),
+        Tool(
+            validate_swift_message,
+            name="validate_swift_message",
+            description="Valide la structure d'un message SWIFT MT. Vérifie les blocs requis (1, 2, 4) et les champs essentiels. Fournissez le message SWIFT brut.",
+        ),
+        Tool(
+            validate_iso20022_message,
+            name="validate_iso20022_message",
+            description="Valide la structure d'un message ISO 20022 XML. Vérifie la structure XML, les éléments requis (GrpHdr, PmtInf, Dbtr, Cdtr, etc.). Fournissez le contenu XML.",
         ),
     ],
 )

@@ -1,6 +1,8 @@
 """Application configuration."""
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+import httpx
 
 
 # Available endpoints
@@ -14,16 +16,31 @@ ENDPOINTS = {
         "model": "dragon-llm-open-finance",  # HF Space accepts any name
     },
     "llm_pro_finance": {
-        "url": "https://api.llm-pro-finance.com",  # Update with actual URL
-        "model": "llama-70b-finance",  # Fine-tuned Llama 70B
+        "url": "https://demo.llmprofinance.com",
+        "model": "DragonLLM/llama3.1-70b-fin-v1.0-fp8",  # Fine-tuned Llama 70B for finance
+        "api_path": "/api",  # LLM Pro Finance uses /api instead of /api/v1
+    },
+    "ollama": {
+        "url": "http://localhost:11434",
+        "model": "",  # Will use OLLAMA_MODEL environment variable
+        "api_path": "/v1",  # Ollama's OpenAI-compatible endpoint
     },
 }
+
+
+def strip_quotes(value: str) -> str:
+    """Strip surrounding quotes from a value."""
+    if value and len(value) >= 2:
+        if (value.startswith("'") and value.endswith("'")) or \
+           (value.startswith('"') and value.endswith('"')):
+            return value[1:-1]
+    return value
 
 
 class Settings(BaseSettings):
     """Application settings."""
     
-    # Endpoint selection: "koyeb", "hf", or "llm_pro_finance"
+    # Endpoint selection: "koyeb", "hf", "llm_pro_finance", or "ollama"
     endpoint: str = "koyeb"
     
     @property
@@ -34,6 +51,8 @@ class Settings(BaseSettings):
     @property
     def model_name(self) -> str:
         """Get the model name for the selected endpoint."""
+        if self.endpoint == "ollama":
+            return self.ollama_model if self.ollama_model else ""
         return ENDPOINTS.get(self.endpoint, ENDPOINTS["koyeb"])["model"]
     
     # Legacy alias for compatibility
@@ -49,6 +68,17 @@ class Settings(BaseSettings):
     
     # LLM Pro Finance API URL (optional, defaults to ENDPOINTS config)
     llm_pro_finance_url: str = ""
+    
+    # Ollama local model configuration
+    ollama_model: str = ""  # Model name to use (e.g., "dragon-llm", "qwen2.5:7b")
+    
+    # Validators to strip quotes from env values
+    @field_validator('llm_pro_finance_key', 'llm_pro_finance_url', 'api_key', 'ollama_model', mode='before')
+    @classmethod
+    def strip_quotes_from_value(cls, v):
+        if isinstance(v, str):
+            return strip_quotes(v)
+        return v
     
     @property
     def judge_api_key(self) -> str:
@@ -72,20 +102,10 @@ class Settings(BaseSettings):
     environment: str = "development"  # development, staging, production
     
     # Generation settings for reasoning models
-    # Qwen3 uses <think> tags which consume 40-60% of tokens
-    # Increase max_tokens to allow complete responses
-    max_tokens: int = 1500  # Increased for reasoning models (was default ~800-1000)
-    
-    # Context window limits for Qwen-3 8B
-    # Base context window: 32,768 tokens (32K)
-    # Extended with YaRN: up to 128,000 tokens (128K)
-    # Current max_tokens is for generation, context input can use up to ~30K tokens
+    max_tokens: int = 1500
     
     # Generation limits
-    # Maximum theoretical generation: 20,000 tokens
-    # Practical limit depends on: context_window - input_tokens - safety_margin
-    # With typical input (~500 tokens), can generate up to ~30K tokens
-    max_generation_limit: int = 20000  # Theoretical maximum (rarely needed)
+    max_generation_limit: int = 20000
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -96,3 +116,49 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+
+def get_best_available_endpoint(timeout: float = 3.0) -> str:
+    """Get the best available endpoint, preferring Koyeb over HF.
+    
+    Returns:
+        "koyeb" if Koyeb is available (online or can be woken up)
+        "hf" if only HuggingFace is available
+        "koyeb" as default if neither is available (will fail gracefully)
+    """
+    koyeb_url = ENDPOINTS.get("koyeb", {}).get("url", "")
+    hf_url = ENDPOINTS.get("hf", {}).get("url", "")
+    
+    # Check Koyeb first (preferred)
+    if koyeb_url:
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                # Try multiple endpoints
+                for url in [f"{koyeb_url}/v1/models", koyeb_url]:
+                    try:
+                        r = client.get(url)
+                        if r.status_code in [200, 401]:
+                            return "koyeb"
+                        # 404 with "no active service" means sleeping, but we can try to wake it
+                        if r.status_code == 404 and "no active service" in r.text.lower():
+                            # Still prefer Koyeb even if sleeping (can be woken up)
+                            return "koyeb"
+                    except httpx.TimeoutException:
+                        # Timeout might mean sleeping, but still prefer Koyeb
+                        continue
+                    except:
+                        continue
+        except:
+            pass
+    
+    # Check HF as fallback
+    if hf_url:
+        try:
+            with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+                r = client.get(hf_url)
+                if r.status_code in [200, 401]:
+                    return "hf"
+        except:
+            pass
+    
+    # Default to koyeb (preferred, even if not currently available)
+    return "koyeb"

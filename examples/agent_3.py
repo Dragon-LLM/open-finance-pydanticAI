@@ -63,6 +63,10 @@ def calculer_valeur_future_investissement(
     Returns:
         Valeur future calculée avec détails
     """
+    # CRITICAL: Normalize rate - if > 1, assume it's a percentage
+    if taux_annuel > 1.0:
+        taux_annuel = taux_annuel / 100.0
+    
     valeur_future = npf.fv(
         rate=taux_annuel,
         nper=duree_annees,
@@ -139,6 +143,15 @@ risk_analyst = Agent(
     model_settings=ModelSettings(max_output_tokens=1200),
     system_prompt="""Vous êtes un analyste de risque financier. Vous évaluez les risques associés à différents instruments financiers et stratégies d'investissement.
 
+⚠️ RÈGLE ABSOLUE - UTILISATION D'OUTILS:
+AVANT TOUTE ANALYSE, vous DEVEZ OBLIGATOIREMENT appeler l'outil calculer_rendement_portfolio.
+SANS CET APPEL, votre analyse est INVALIDE. Ne faites JAMAIS d'analyse sans avoir calculé le rendement attendu.
+
+ÉTAPES OBLIGATOIRES:
+1. Appelez calculer_rendement_portfolio avec les pourcentages d'allocation
+2. Utilisez le résultat pour évaluer le risque
+3. Répondez avec le JSON structuré
+
 FORMAT DE SORTIE OBLIGATOIRE - JSON STRICT:
 Vous DEVEZ répondre UNIQUEMENT avec un objet JSON valide correspondant exactement à ce schéma:
 {
@@ -161,9 +174,10 @@ RÈGLES CRITIQUES:
 2. niveau_risque doit être un ENTIER entre 1 et 5 (pas de décimales)
 3. facteurs_risque doit être un TABLEAU de chaînes (au moins 2 éléments)
 4. recommandation et justification doivent être des CHAÎNES non vides
-5. Utilisez les outils disponibles pour calculer les rendements attendus avant d'analyser
-6. Analysez les facteurs de risque de manière structurée
-7. Fournissez des recommandations claires et justifiées
+5. ⚠️ OBLIGATOIRE: Appelez calculer_rendement_portfolio EN PREMIER. Sans cet appel, l'analyse est incomplète.
+6. Fournissez une justification détaillée incluant les rendements calculés et leur impact sur le niveau de risque
+7. Analysez les facteurs de risque de manière structurée
+8. Fournissez des recommandations claires et justifiées
 
 NIVEAUX DE RISQUE:
 1 = Très faible (obligations d'État, épargne)
@@ -175,7 +189,7 @@ NIVEAUX DE RISQUE:
         Tool(
             calculer_rendement_portfolio,
             name="calculer_rendement_portfolio",
-            description="OBLIGATOIRE pour calculer le rendement attendu d'un portfolio. Utilisez cet outil pour analyser les rendements basés sur l'allocation d'actifs.",
+            description="⚠️ OBLIGATOIRE - À APPELER EN PREMIER. Calcule le rendement attendu d'un portfolio basé sur l'allocation d'actifs. Vous DEVEZ utiliser cet outil avant toute analyse de risque. Fournissez les pourcentages d'allocation (actions, obligations, immobilier, autres) en décimales (ex: 0.40 pour 40%).",
         ),
     ],
     output_type=AnalyseRisque,  # Utilisation du structured output
@@ -375,6 +389,15 @@ async def workflow_analyse_investissement():
             print(f"  🔧 Outils utilisés: {len(tool_calls_risk)}")
             for tc in tool_calls_risk[:2]:  # Afficher les 2 premiers
                 print(f"     - {tc[:80]}...")
+            # Check if calculer_rendement_portfolio was called
+            yield_tool_called = any("calculer_rendement_portfolio" in tc.lower() for tc in tool_calls_risk)
+            if not yield_tool_called:
+                print(f"  ⚠️  ATTENTION: calculer_rendement_portfolio n'a pas été appelé!")
+                print(f"     L'agent devrait utiliser cet outil pour calculer les rendements avant l'analyse.")
+            else:
+                print(f"  ✅ calculer_rendement_portfolio a été appelé correctement")
+        else:
+            print(f"  ⚠️  Aucun outil appelé - calculer_rendement_portfolio est requis!")
         print()
         
         # Étape 2: Conseil fiscal (sans outils requis)
