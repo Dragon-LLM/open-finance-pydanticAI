@@ -1856,46 +1856,41 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
                 available_endpoints = get_available_endpoints(include_llm_pro=True)
                 
                 # Build endpoint options - show ALL endpoints regardless of availability
-                # Mark unavailable/disabled ones in the label
+                # Simple labels without status indicators
                 endpoint_choices = []  # List of (label, value) tuples
                 
-                # Always show Koyeb (default)
+                # Always show Koyeb first (default)
                 if "koyeb" not in exclude_list:
-                    status = "●" if available_endpoints.get("koyeb", False) else "○"
-                    endpoint_choices.append((f"{status} Koyeb", "koyeb"))
+                    endpoint_choices.append(("Koyeb", "koyeb"))
                 
                 # Always show HuggingFace
                 if "hf" not in exclude_list:
-                    status = "●" if available_endpoints.get("hf", False) else "○"
-                    endpoint_choices.append((f"{status} HuggingFace", "hf"))
+                    endpoint_choices.append(("HuggingFace", "hf"))
                 
                 # Always show Ollama if configured
                 if "ollama" not in exclude_list:
                     ollama_settings = Settings()
                     if ollama_settings.ollama_model:
-                        status = "●" if available_endpoints.get("ollama", False) else "○"
-                        endpoint_choices.append((f"{status} Ollama", "ollama"))
+                        endpoint_choices.append(("Ollama", "ollama"))
                 
                 # Handle LLM Pro - show if not excluded
                 if "llm_pro_finance" not in exclude_list:
                     if "llm_pro_finance" in disabled_dict:
                         # Show as disabled
-                        endpoint_choices.append(("⚠ LLM Pro (disabled)", "llm_pro_finance"))
+                        endpoint_choices.append(("LLM Pro (disabled)", "llm_pro_finance"))
                     else:
-                        status = "●" if available_endpoints.get("llm_pro_finance", False) else "○"
-                        endpoint_choices.append((f"{status} LLM Pro", "llm_pro_finance"))
+                        endpoint_choices.append(("LLM Pro", "llm_pro_finance"))
                 
                 # Default to Koyeb (always first in list)
                 default_value = "koyeb" if any(v == "koyeb" for _, v in endpoint_choices) else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
                 
-                # Use compact Dropdown
+                # Use compact Dropdown with label showing default
                 endpoint_selector = gr.Dropdown(
                     choices=endpoint_choices,
                     value=default_value,
-                    label="",
+                    label="Endpoint",
                     scale=1,
-                    container=False,
-                    show_label=False
+                    container=False
                 )
             
             with gr.Row():
