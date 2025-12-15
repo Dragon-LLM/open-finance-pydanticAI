@@ -24,6 +24,50 @@ from app.config import Settings, ENDPOINTS
 
 
 # ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def get_endpoint_from_model(model) -> str:
+    """Determine which endpoint a model is using by comparing base_url.
+    
+    Args:
+        model: PydanticAI model instance
+        
+    Returns:
+        Endpoint name ("koyeb", "hf", "llm_pro_finance", "ollama") or "unknown"
+    """
+    try:
+        if hasattr(model, 'provider') and hasattr(model.provider, 'base_url'):
+            base_url = model.provider.base_url
+            
+            # Remove /v1 or /api suffix for comparison
+            base_url_clean = base_url.rstrip('/v1').rstrip('/api').rstrip('/')
+            
+            # Compare with each endpoint's URL
+            for endpoint_name, endpoint_config in ENDPOINTS.items():
+                endpoint_url = endpoint_config.get("url", "").rstrip('/')
+                api_path = endpoint_config.get("api_path", "/v1").lstrip('/')
+                
+                # Check if base_url matches this endpoint
+                if endpoint_name == "llm_pro_finance":
+                    # LLM Pro Finance uses /api path
+                    if base_url_clean == endpoint_url or base_url == f"{endpoint_url}/api":
+                        return endpoint_name
+                elif endpoint_name == "ollama":
+                    # Ollama uses /v1 path
+                    if base_url_clean == endpoint_url or base_url == f"{endpoint_url}/v1":
+                        return endpoint_name
+                else:
+                    # Koyeb and HF use /v1 path
+                    if base_url_clean == endpoint_url or base_url == f"{endpoint_url}/v1":
+                        return endpoint_name
+    except Exception as e:
+        print(f"[WARNING] Could not determine endpoint from model: {e}")
+    
+    return "unknown"
+
+
+# ============================================================================
 # GLOBAL STATE
 # ============================================================================
 
@@ -1304,6 +1348,10 @@ def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
         
         # Create agent with selected endpoint model
         model = get_model_for_endpoint(endpoint)
+        # Track whether fallback occurred
+        fallback_occurred = False
+        actual_endpoint = endpoint
+        
         # Recreate agent with new model (agents are immutable, so we create a new one)
         # Try to access agent configuration using various methods
         try:
@@ -1392,7 +1440,12 @@ Répondez en français avec les messages convertis."""
             # Fallback: use original agent (will use default endpoint)
             print(f"[WARNING] Could not recreate Agent 5 with selected endpoint '{endpoint}', using default endpoint: {e}")
             dynamic_agent = agent_5
-            # Note: endpoint_used will still be recorded as the selected endpoint even if fallback is used
+            fallback_occurred = True
+            # Get actual endpoint from fallback agent's model
+            if hasattr(dynamic_agent, 'model'):
+                actual_endpoint = get_endpoint_from_model(dynamic_agent.model)
+                if actual_endpoint == "unknown":
+                    actual_endpoint = f"{endpoint} (fallback to default)"
         
         # Agent 5 operations can be complex - use longer timeout (120s)
         loop = asyncio.new_event_loop()
@@ -1410,12 +1463,16 @@ Répondez en français avec les messages convertis."""
         # Store complete result with metadata
         complete_result = output.model_dump() if hasattr(output, 'model_dump') else {"output": str(output), "raw": str(output)}
         if isinstance(complete_result, dict):
-            complete_result["_metadata"] = {
+            metadata = {
                 "tool_calls": tool_info.get("count", 0),
                 "elapsed": elapsed,
                 "tools_used": tool_info.get("names", []),
-                "endpoint_used": endpoint
+                "endpoint_used": actual_endpoint
             }
+            if fallback_occurred:
+                metadata["fallback_occurred"] = True
+                metadata["requested_endpoint"] = endpoint
+            complete_result["_metadata"] = metadata
         
         results_store["Agent 5 - Convert"] = complete_result
         print(f"[DEBUG] Stored Agent 5-Convert result. Type: {type(complete_result)}")
@@ -1447,6 +1504,10 @@ def run_agent_5_validate(prompt: str, endpoint: str = "koyeb"):
     
     # Create agent with selected endpoint model
     model = get_model_for_endpoint(endpoint)
+    # Track whether fallback occurred
+    fallback_occurred = False
+    actual_endpoint = endpoint
+    
     try:
         # Get model_settings (it's a dict, convert to ModelSettings)
         model_settings_dict = agent_5_validator.model_settings if hasattr(agent_5_validator, 'model_settings') else {}
@@ -1504,6 +1565,12 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
     except (AttributeError, TypeError, ImportError) as e:
         print(f"[WARNING] Could not recreate Agent 5 Validator with selected endpoint '{endpoint}', using default endpoint: {e}")
         dynamic_agent = agent_5_validator
+        fallback_occurred = True
+        # Get actual endpoint from fallback agent's model
+        if hasattr(dynamic_agent, 'model'):
+            actual_endpoint = get_endpoint_from_model(dynamic_agent.model)
+            if actual_endpoint == "unknown":
+                actual_endpoint = f"{endpoint} (fallback to default)"
     
     output, usage, elapsed, tool_info = execute_agent(dynamic_agent, prompt, None, "Agent 5 - Validate")
     
@@ -1512,11 +1579,15 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
     
     result_data = output.model_dump() if hasattr(output, 'model_dump') else str(output)
     if isinstance(result_data, dict):
-        result_data["_metadata"] = {
+        metadata = {
             "tool_calls": tool_info.get("count", 0),
             "elapsed": elapsed,
-            "endpoint_used": endpoint
+            "endpoint_used": actual_endpoint
         }
+        if fallback_occurred:
+            metadata["fallback_occurred"] = True
+            metadata["requested_endpoint"] = endpoint
+        result_data["_metadata"] = metadata
     
     results_store["Agent 5 - Validate"] = result_data
     return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
@@ -1539,6 +1610,10 @@ def run_agent_5_risk(prompt: str, endpoint: str = "koyeb"):
         
         # Create agent with selected endpoint model
         model = get_model_for_endpoint(endpoint)
+        # Track whether fallback occurred
+        fallback_occurred = False
+        actual_endpoint = endpoint
+        
         try:
             from pydantic_ai import ModelSettings
             from examples.agent_5_risk import (
@@ -1616,6 +1691,12 @@ Répondez avec un objet RiskScore structuré incluant:
         except (AttributeError, TypeError, ImportError) as e:
             print(f"[WARNING] Could not recreate Agent 5 Risk with selected endpoint '{endpoint}', using default endpoint: {e}")
             dynamic_agent = agent_5_risk
+            fallback_occurred = True
+            # Get actual endpoint from fallback agent's model
+            if hasattr(dynamic_agent, 'model'):
+                actual_endpoint = get_endpoint_from_model(dynamic_agent.model)
+                if actual_endpoint == "unknown":
+                    actual_endpoint = f"{endpoint} (fallback to default)"
         
         # Agent 5 Risk operations can be complex - use longer timeout (120s)
         loop = asyncio.new_event_loop()
@@ -1632,11 +1713,15 @@ Répondez avec un objet RiskScore structuré incluant:
         
         result_data = output.model_dump() if hasattr(output, 'model_dump') else str(output)
         if isinstance(result_data, dict):
-            result_data["_metadata"] = {
+            metadata = {
                 "tool_calls": tool_info.get("count", 0),
                 "elapsed": elapsed,
-                "endpoint_used": endpoint
+                "endpoint_used": actual_endpoint
             }
+            if fallback_occurred:
+                metadata["fallback_occurred"] = True
+                metadata["requested_endpoint"] = endpoint
+            result_data["_metadata"] = metadata
         
         results_store["Agent 5 - Risk"] = result_data
         return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
