@@ -67,6 +67,21 @@ def get_endpoint_from_model(model) -> str:
     return "unknown"
 
 
+def get_local_ollama_models(max_items: int = 4) -> Tuple[List[str], int]:
+    """List local Ollama models from the default manifests directory."""
+    base_dir = Path.home() / ".ollama" / "models" / "manifests" / "registry.ollama.ai" / "library"
+    try:
+        names = [
+            d.name
+            for d in base_dir.iterdir()
+            if d.is_dir()
+        ]
+        names = sorted(names)
+        return names[:max_items], len(names)
+    except Exception:
+        return [], 0
+
+
 # ============================================================================
 # GLOBAL STATE
 # ============================================================================
@@ -1880,9 +1895,17 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
                         disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
                     elif not ollama_settings.ollama_model:
                         # Show selectable option but warn that config is needed
-                        endpoint_choices.append(("Ollama (set OLLAMA_MODEL)", "ollama"))
+                        local_models, total_local = get_local_ollama_models()
+                        if local_models:
+                            preview = ", ".join(local_models)
+                            if total_local > len(local_models):
+                                preview += ", ..."
+                            label = f\"Ollama (set OLLAMA_MODEL, e.g., {preview})\"
+                        else:
+                            label = \"Ollama (set OLLAMA_MODEL)\"
+                        endpoint_choices.append((label, \"ollama\"))
                     else:
-                        endpoint_choices.append(("Ollama", "ollama"))
+                        endpoint_choices.append((f\"Ollama ({ollama_settings.ollama_model})\", \"ollama\"))
                 
                 # LLM Pro
                 if "llm_pro_finance" not in exclude_list:
