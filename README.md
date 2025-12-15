@@ -1,72 +1,136 @@
 # Open Finance PydanticAI
 
-Research project evaluating small language models' (8B parameters) capability to call tools and produce structured outputs using PydanticAI.
+Research project evaluating small language models (8B parameters) for tool calling and structured output generation in financial applications using PydanticAI.
 
-## Objective
+## Overview
 
-Evaluate whether 8B models can reliably:
-- Call tools for financial calculations
-- Generate structured outputs using Pydantic schemas
-- Maintain accuracy with client-side verification
+This system demonstrates that 8B parameter models can reliably perform financial tasks when:
+- Tool calling is explicitly enforced via system prompts
+- Structured outputs are validated using Pydantic schemas
+- Client-side verification is performed for critical calculations
 
-**Key Finding**: Small models (8B) are viable when tool calling is explicitly enforced, structured outputs are used, and client-side verification is performed.
+The application provides six specialized agents for financial analysis, accessible via a Gradio web interface or programmatic API. All agents use OpenAI-compatible endpoints with support for multiple deployment backends.
 
-## Agents
+## Architecture
 
-Five specialized agents demonstrate different capabilities:
+### Agents
 
-### Agent 1: Portfolio Extractor
-Extracts structured portfolio data from natural language. Parses positions (symbol, quantity, price) and calculates total value.
+**Agent 1: Portfolio Extractor** (`examples/agent_1.py`)
+- Extracts structured portfolio data from unstructured text
+- Identifies stock symbols, quantities, purchase prices, and dates
+- Outputs validated `Portfolio` schema with calculated total value
+- Uses client-side arithmetic verification to correct model calculation errors
 
-**File**: `examples/agent_1.py`
+**Agent 2: Financial Calculator** (`examples/agent_2.py`)
+- Performs financial calculations using numpy-financial library
+- Tools: future value, loan payments, NPV, IRR, interest rate calculations
+- Handles rate normalization (percentage vs decimal) automatically
+- Compliance wrapper available (`agent_2_compliance.py`) for tool usage verification
 
-### Agent 2: Financial Calculator
-Performs financial calculations using numpy-financial tools: future value, monthly payments, present value, interest rates, portfolio performance.
-
-**Files**: 
-- `examples/agent_2.py` - Main calculator
-- `examples/agent_2_compliance.py` - Compliance wrapper with tool usage verification
-
-### Agent 3: Multi-Step Workflow
-Orchestrates specialized sub-agents for comprehensive analysis:
+**Agent 3: Risk and Tax Advisor** (`examples/agent_3.py`)
+- Multi-agent workflow orchestrating specialized sub-agents
 - Risk Analyst: Investment risk evaluation (1-5 scale)
 - Tax Advisor: French tax implications (PEA, assurance-vie, compte-titres)
 - Portfolio Optimizer: Asset allocation recommendations
 
-**File**: `examples/agent_3.py`
+**Agent 4: Option Pricing** (`examples/agent_4.py`)
+- Calculates European option prices using QuantLib Black-Scholes model
+- Computes Greeks: Delta, Gamma, Theta, Vega, Rho
+- Requires QuantLib installation (`pip install -e ".[quant]"`)
+- Compliance wrapper available (`agent_4_compliance.py`)
 
-### Agent 4: Option Pricing
-Calculates option prices and Greeks (Delta, Gamma, Vega, Theta) using QuantLib.
+**Agent 5: SWIFT/ISO 20022 Processing**
+Three specialized variants for financial message processing:
 
-**Files**:
-- `examples/agent_4.py` - Main pricing agent
-- `examples/agent_4_compliance.py` - Compliance wrapper
+- **Convert** (`examples/agent_5.py`): Bidirectional conversion between SWIFT MT103 and ISO 20022 pacs.008 formats
+- **Validate** (`examples/agent_5_validator.py`): Message structure, format, and field validation
+- **Risk Assessment** (`examples/agent_5_risk.py`): AML/KYC risk scoring with PEP/sanctions checking
 
-### Agent 5: SWIFT/ISO 20022 Processing
-Three specialized variants:
-- **Convert**: Bidirectional SWIFT MT103 ↔ ISO 20022 pacs.008 conversion
-- **Validate**: Message structure, format, and field validation
-- **Risk Assessment**: AML/KYC risk scoring for financial messages
+**Agent 6: Judge Agent** (`examples/judge_agent.py`)
+- Critical evaluation using Llama 70B model (via LLM Pro Finance endpoint)
+- Reviews agent outputs for correctness, completeness, and quality
+- Provides improvement suggestions and tool usage analysis
+- Falls back to 8B model if LLM Pro Finance key unavailable
 
-**Files**:
-- `examples/agent_5.py` - Conversion agent
-- `examples/agent_5_validator.py` - Validation agent
-- `examples/agent_5_risk.py` - Risk assessment agent
+### Tool Calling
 
-### Judge Agent
-Critical evaluation agent using Llama 70B (via LLM Pro Finance) to assess all agent outputs. Reviews correctness, quality, tool usage, and provides improvement suggestions.
+All agents use PydanticAI's tool calling mechanism with explicit tool definitions. Tools are Python functions wrapped with `Tool()` decorator, providing:
+- Type-safe parameter validation
+- Automatic schema generation
+- Error handling and retry logic
 
-**File**: `examples/judge_agent.py`
+Key tool libraries:
+- **numpy-financial**: Financial calculations (FV, PV, PMT, NPV, IRR)
+- **QuantLib**: Option pricing and Greeks calculation
+- **Custom SWIFT/ISO 20022 parsers**: Message format conversion and validation
 
-## Quick Start
+Tool calling is enforced via system prompts that explicitly require tool usage before responding. Agents track tool call metadata including count, names, and execution results.
 
-### Installation
+### Gradio Interface
+
+The Gradio application (`app/gradio_app.py`) provides a web-based interface with:
+
+- **Tabbed interface**: One tab per agent with dedicated input/output areas
+- **Endpoint selection**: Dynamic endpoint switching (Koyeb, HuggingFace, Ollama, LLM Pro Finance)
+- **Health monitoring**: Real-time endpoint status checks with wake-up capability for sleeping services
+- **Result storage**: Persistent storage of agent outputs with metadata
+- **Tool usage tracking**: Display of tool calls, execution time, and endpoint used
+- **Metadata display**: Endpoint tracking, fallback detection, and performance metrics
+
+Features:
+- Automatic endpoint health checking
+- Koyeb service wake-up for sleeping instances
+- Endpoint-specific error handling
+- Result history and export capabilities
+
+### Endpoints
+
+The system supports four endpoint types, all using OpenAI-compatible APIs:
+
+**Koyeb** (default, recommended)
+- Backend: vLLM with Flash Attention
+- Model: `DragonLLM/Qwen-Open-Finance-R-8B`
+- URL: `https://dragon-llm-dealexmachina-673cae4f.koyeb.app`
+- Features: Tool calling enabled, auto-wake for sleeping services
+- API path: `/v1`
+
+**HuggingFace Spaces**
+- Backend: Text Generation Inference (TGI)
+- Model: `dragon-llm-open-finance`
+- URL: `https://jeanbaptdzd-open-finance-llm-8b.hf.space`
+- Features: Persistent availability, tool calling support
+- API path: `/v1`
+
+**Ollama** (local)
+- Backend: Local Ollama server
+- Model: Configurable via `OLLAMA_MODEL` environment variable
+- URL: `http://localhost:11434`
+- Features: Local quantized models, full tool calling support
+- API path: `/v1`
+- Setup: Requires Ollama installation and model import
+
+**LLM Pro Finance**
+- Backend: Custom API
+- Model: `DragonLLM/llama3.1-70b-fin-v1.0-fp8` (70B parameters)
+- URL: `https://demo.llmprofinance.com`
+- Features: Larger model for Judge Agent, requires API key
+- API path: `/api`
+- Limitations: Tool calling not yet supported (coming soon)
+
+Endpoint selection is dynamic per-agent. The system automatically detects endpoint availability and can fall back to default endpoints if agent recreation fails. Metadata tracks actual endpoint used vs requested endpoint.
+
+## Installation
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-### Configuration
+For option pricing (Agent 4):
+```bash
+pip install -e ".[dev,quant]"
+```
+
+## Configuration
 
 Create `.env` file:
 
@@ -79,19 +143,21 @@ MAX_TOKENS=1500
 LLM_PRO_FINANCE_KEY=your-api-key-here
 LLM_PRO_FINANCE_URL=https://api.llm-pro-finance.com
 
-# Optional: Ollama local endpoint (for locally imported models)
-OLLAMA_MODEL=dragon-llm  # Use exact model name from `ollama list` (e.g., "dragon-llm" or "dragon-llm:latest")
+# Optional: Ollama local endpoint
+OLLAMA_MODEL=dragon-llm
 ```
 
-### Start Gradio App
+## Usage
+
+### Gradio Interface
 
 ```bash
 python app/gradio_app.py
 ```
 
-The app will be available at `http://localhost:7860` with tabs for each agent.
+Access at `http://localhost:7860`. Select endpoint and agent tab, enter prompt, view results with tool usage metadata.
 
-### Usage
+### Programmatic API
 
 ```python
 from examples.agent_1 import agent_1, Portfolio
@@ -99,9 +165,21 @@ from examples.agent_2 import agent_2
 
 # Structured extraction
 result = await agent_1.run("Portfolio: 50 AIR.PA at 120€", output_type=Portfolio)
+portfolio = result.output
 
 # Financial calculations
 result = await agent_2.run("50000€ at 4% for 10 years. Future value?")
+```
+
+### Endpoint Selection
+
+```python
+from app.models import get_model_for_endpoint
+from pydantic_ai import Agent
+
+# Create agent with specific endpoint
+model = get_model_for_endpoint("ollama")
+agent = Agent(model, system_prompt="...", tools=[...])
 ```
 
 ## Evaluation
@@ -112,7 +190,12 @@ Run comprehensive evaluation suite:
 python examples/evaluate_all_agents.py
 ```
 
-Results saved to `examples/evaluate_all_agents_results.json` with token usage, tool call verification, correctness validation, and inference speed.
+Results saved to `examples/evaluate_all_agents_results.json` with:
+- Token usage (input/output/total)
+- Tool call verification
+- Correctness validation
+- Inference speed metrics
+- Endpoint metadata
 
 ## Model Deployment
 
@@ -133,76 +216,50 @@ Ollama allows you to run quantized models locally with full tool calling support
 **Setup**:
 
 1. Install Ollama from [ollama.ai](https://ollama.ai)
+Requires deployment of `DragonLLM/Qwen-Open-Finance-R-8B` on an OpenAI-compatible endpoint. See [simple-llm-pro-finance](https://github.com/DealExMachina/simple-llm-pro-finance) for deployment instructions.
 
-2. Set up your local model:
+### Ollama Setup
 
-   **Option A: Import a GGUF model file**
+1. Install from [ollama.ai](https://ollama.ai)
+2. Import model:
    ```bash
-   # Create a Modelfile pointing to your local GGUF file
+   # Create Modelfile
    cat > Modelfile << EOF
-   FROM /path/to/your/model.gguf
+   FROM /path/to/model.gguf
    PARAMETER temperature 0.7
    PARAMETER num_ctx 8192
    EOF
    
    ollama create dragon-llm -f Modelfile
    ```
-   
-   **Option B: Create from a local directory**
-   ```bash
-   # If you have model files in a directory
-   ollama create dragon-llm --file /path/to/your/Modelfile
-   ```
-   
-   **Option C: Use existing local model**
-   ```bash
-   # List available models
-   ollama list
-   # Use an existing model name
-   ```
-
-3. Verify your model is available:
-   ```bash
-   ollama list
-   # Should show your model name
-   ```
-
-4. Configure in `.env`:
-   ```env
-   OLLAMA_MODEL=dragon-llm  # Use the exact model name from `ollama list`
-   ```
-
-5. Start Ollama (usually runs automatically):
-   ```bash
-   ollama serve
-   ```
-
-6. Verify Ollama is running and model is accessible:
-   ```bash
-   curl http://localhost:11434/v1/models
-   # Should return JSON with your model listed
-   ```
-
-7. Select "Ollama" endpoint in the Gradio UI
-
-**Note**: The model name in `OLLAMA_MODEL` must exactly match the name shown in `ollama list`. If you created a model with a tag (e.g., `dragon-llm:latest`), use the full name or just the base name depending on how Ollama registered it.
-
-**Model Specifications**:
-- Model: `DragonLLM/Qwen-Open-Finance-R-8B`
-- Context: 8192 tokens
-- Tool Calling: Requires explicit vLLM configuration
-- Language: French financial terminology optimized
+3. Configure `OLLAMA_MODEL=dragon-llm` in `.env`
+4. Verify: `curl http://localhost:11434/v1/models`
 
 ## Best Practices
 
 - Use `max_output_tokens` (600-1500) to stay within context limits
 - Calculate totals client-side (model arithmetic unreliable)
 - Use structured outputs (Pydantic) for validation
-- Implement explicit tool calling instructions in prompts
+- Implement explicit tool calling instructions in system prompts
+- Verify tool usage in compliance-critical applications
+- Monitor endpoint metadata for fallback detection
+
+## Technical Specifications
+
+- **Model**: DragonLLM/Qwen-Open-Finance-R-8B (8B parameters)
+- **Context Window**: 8192 tokens (base), up to 128K with YaRN
+- **Framework**: PydanticAI 1.18.0+
+- **Tool Calling**: OpenAI-compatible function calling
+- **Output Format**: Pydantic schemas with automatic validation
+- **Language**: French financial terminology optimized
 
 ## References
 
-- Model: DragonLLM/Qwen-Open-Finance-R-8B - [arXiv:2511.08621](https://arxiv.org/abs/2511.08621)
-- PydanticAI: [https://ai.pydantic.dev/](https://ai.pydantic.dev/)
-- numpy-financial: [https://numpy.org/numpy-financial/](https://numpy.org/numpy-financial/)
-- QuantLib: [https://www.quantlib.org/](https://www.quantlib.org/)
+- **Qwen Model**: Qwen Team. "Qwen2.5: A Party of Foundation Models" arXiv:2511.08621 (2024). [arXiv:2511.08621](https://arxiv.org/abs/2511.08621)
+- **PydanticAI**: Pydantic AI Framework. [https://ai.pydantic.dev/](https://ai.pydantic.dev/)
+- **numpy-financial**: NumPy Financial Functions. [https://numpy.org/numpy-financial/](https://numpy.org/numpy-financial/)
+- **QuantLib**: QuantLib - Quantitative Finance Library. [https://www.quantlib.org/](https://www.quantlib.org/)
+- **SWIFT Standards**: SWIFT MT Message Standards. [https://www.swift.com/](https://www.swift.com/)
+- **ISO 20022**: ISO 20022 Financial Services Messaging. [https://www.iso20022.org/](https://www.iso20022.org/)
+- **vLLM**: vLLM: Easy, Fast, and Cheap LLM Serving. [https://github.com/vllm-project/vllm](https://github.com/vllm-project/vllm)
+- **Ollama**: Ollama - Local LLM Runtime. [https://ollama.ai/](https://ollama.ai/)
