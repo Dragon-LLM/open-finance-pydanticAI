@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from app.agents import FinanceAnswer, finance_agent
 from app.config import settings
 from app.utils import extract_answer_from_reasoning, extract_key_terms
+from app.langfuse_integration import LangfusePydanticAIHandler
 
 app = FastAPI(
     title="Open Finance PydanticAI API",
@@ -52,8 +53,19 @@ async def ask_question(request: QuestionRequest):
     from <think> tags.
     """
     try:
-        # Run agent with simple text output (reasoning models return text with tags)
-        result = await finance_agent.run(request.question)
+        # Run agent with Langfuse tracing
+        handler = LangfusePydanticAIHandler(
+            agent_name="finance_agent",
+            endpoint=settings.endpoint,
+        )
+        result = await handler.trace_agent_run(
+            finance_agent,
+            request.question,
+            metadata={
+                "endpoint": settings.endpoint,
+                "model": settings.model_name,
+            },
+        )
         
         # Get the raw response text from AgentRunResult
         raw_response = result.output if hasattr(result, 'output') else str(result)

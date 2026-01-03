@@ -21,14 +21,38 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from app.config import Settings, ENDPOINTS
+from app.langfuse_integration import LangfusePydanticAIHandler
 
 
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
+def get_model_display_name(endpoint: str) -> str:
+    """Get a human-readable model name for an endpoint.
+    
+    Args:
+        endpoint: Endpoint name ("koyeb", "hf", "llm_pro_finance", "ollama")
+        
+    Returns:
+        Human-readable model name
+    """
+    if endpoint == "koyeb":
+        return "Dragon LLM Open Finance 8B"
+    elif endpoint == "hf":
+        return "Dragon LLM Open Finance 8B (HF)"
+    elif endpoint == "llm_pro_finance":
+        return "Llama 70B"
+    elif endpoint == "ollama":
+        settings = Settings()
+        model_name = settings.ollama_model or "Ollama"
+        return f"{model_name}"
+    else:
+        return endpoint
+
+
 def get_endpoint_from_model(model) -> str:
-    """Determine which endpoint a model is using by comparing base_url.
+    """Determine which endpoint a model is using by comparing base_url or model type.
     
     Args:
         model: PydanticAI model instance
@@ -37,6 +61,12 @@ def get_endpoint_from_model(model) -> str:
         Endpoint name ("koyeb", "hf", "llm_pro_finance", "ollama") or "unknown"
     """
     try:
+        # Check if it's an OllamaModel from pydanticai-ollama
+        model_type_name = type(model).__name__
+        if model_type_name == "OllamaModel":
+            return "ollama"
+        
+        # For OpenAI-compatible models, check provider base_url
         if hasattr(model, 'provider') and hasattr(model.provider, 'base_url'):
             base_url = model.provider.base_url
             
@@ -54,7 +84,7 @@ def get_endpoint_from_model(model) -> str:
                     if base_url_clean == endpoint_url or base_url == f"{endpoint_url}/api":
                         return endpoint_name
                 elif endpoint_name == "ollama":
-                    # Ollama uses /v1 path
+                    # Ollama uses /v1 path (for OpenAI-compatible mode)
                     if base_url_clean == endpoint_url or base_url == f"{endpoint_url}/v1":
                         return endpoint_name
                 else:
@@ -67,11 +97,102 @@ def get_endpoint_from_model(model) -> str:
     return "unknown"
 
 
+def get_local_ollama_models(max_items: int = 4) -> Tuple[List[str], int]:
+    """List local Ollama models from the default manifests directory."""
+    base_dir = Path.home() / ".ollama" / "models" / "manifests" / "registry.ollama.ai" / "library"
+    try:
+        names = [
+            d.name
+            for d in base_dir.iterdir()
+            if d.is_dir()
+        ]
+        names = sorted(names)
+        return names[:max_items], len(names)
+    except Exception:
+        return [], 0
+
+
 # ============================================================================
 # GLOBAL STATE
 # ============================================================================
 
-results_store: Dict[str, Any] = {}
+# Store all agent runs (including failures) for judge agent
+# Structure: {agent_name: [list of runs], ...}
+# Each run includes: output, endpoint, model, success, timestamp, metadata, input_prompt, etc.
+results_store: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def store_agent_result(
+    agent_name: str,
+    output: Any,
+    endpoint: str,
+    success: bool = True,
+    error_msg: str = None,
+    input_prompt: str = None,
+    elapsed: float = None,
+    tool_info: Dict[str, Any] = None,
+    metadata: Dict[str, Any] = None,
+):
+    """Store an agent run result (success or failure) for the judge agent.
+    
+    Args:
+        agent_name: Name of the agent (e.g., "Agent 1", "Agent 5 - Risk")
+        output: The output from the agent (or None if failed)
+        endpoint: Endpoint used ("koyeb", "hf", "ollama", "llm_pro_finance")
+        success: Whether the run was successful
+        error_msg: Error message if failed
+        input_prompt: Original input prompt
+        elapsed: Time elapsed in seconds
+        tool_info: Tool usage information
+        metadata: Additional metadata
+    """
+    from datetime import datetime
+    
+    # Initialize list for this agent if not exists
+    if agent_name not in results_store:
+        results_store[agent_name] = []
+    
+    # Get model display name
+    model_name = get_model_display_name(endpoint)
+    
+    # Prepare result data
+    result_data = {
+        "timestamp": datetime.now().isoformat(),
+        "endpoint": endpoint,
+        "model": model_name,
+        "success": success,
+        "input_prompt": input_prompt,
+        "elapsed": elapsed,
+    }
+    
+    # Add output or error
+    if success and output is not None:
+        if hasattr(output, 'model_dump'):
+            result_data["output"] = output.model_dump()
+        else:
+            result_data["output"] = output
+    else:
+        result_data["error"] = error_msg or "Unknown error"
+        result_data["output"] = None
+    
+    # Add tool info
+    if tool_info:
+        result_data["tool_calls"] = tool_info.get("count", 0)
+        result_data["tool_details"] = tool_info.get("details", [])
+    
+    # Add metadata
+    if metadata:
+        result_data["metadata"] = metadata
+    elif success and hasattr(output, 'model_dump'):
+        # Try to extract metadata from output
+        output_dict = output.model_dump() if hasattr(output, 'model_dump') else {}
+        if isinstance(output_dict, dict) and "_metadata" in output_dict:
+            result_data["metadata"] = output_dict["_metadata"]
+    
+    # Append to list (don't overwrite previous runs)
+    results_store[agent_name].append(result_data)
+    
+    print(f"[DEBUG] Stored {agent_name} run #{len(results_store[agent_name])} (success={success}, endpoint={endpoint}, model={model_name})")
 
 # Agent descriptions
 AGENT_INFO = {
@@ -101,6 +222,7 @@ AGENT_INFO = {
         "default_input": """Convertis ce SWIFT MT103 vers ISO 20022:
 
 {1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
 {4:
 :20:REF123
 :32A:240101EUR1000,00
@@ -116,9 +238,14 @@ Pour la direction inverse (ISO→SWIFT), fournis un XML ISO 20022 et demande la 
         "title": "Message Validation",
         "description": "Validates SWIFT MT and ISO 20022 message structure, format, and required fields",
         "default_input": """{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
 {4:
 :20:REF123
 :32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
 -}""",
     },
     "Agent 5 - Risk": {
@@ -432,12 +559,16 @@ def wake_up_koyeb() -> Tuple[str, str]:
         return get_status_html(), f"❌ Wake-up failed: {message}. Try again in a few seconds."
 
 
-def is_backend_ready(agent_name: str) -> Tuple[bool, str]:
-    """Check if the backend for an agent is ready with detailed diagnostics."""
+def is_backend_ready(agent_name: str, endpoint: str | None = None) -> Tuple[bool, str]:
+    """Check if the backend for an agent is ready with detailed diagnostics.
+
+    If an endpoint is provided, only that backend is considered. This avoids
+    blocking Ollama/HF usage when Koyeb is offline.
+    """
     settings = Settings()
     
-    # Judge uses LLM Pro
-    if "Judge" in agent_name or agent_name == "Agent 6":
+    # Judge uses LLM Pro (or explicit llm_pro_finance endpoint)
+    if endpoint == "llm_pro_finance" or "Judge" in agent_name or agent_name == "Agent 6":
         url = settings.llm_pro_finance_url or ENDPOINTS.get("llm_pro_finance", {}).get("url", "")
         if not url:
             return False, "LLM Pro Finance URL not configured. Set LLM_PRO_FINANCE_URL in .env"
@@ -459,6 +590,43 @@ def is_backend_ready(agent_name: str) -> Tuple[bool, str]:
             return True, ""
         else:
             return False, f"LLM Pro Finance server not available at {url}. Check if the service is running."
+    
+    # Specific endpoint checks
+    if endpoint == "ollama":
+        ollama_url = ENDPOINTS.get("ollama", {}).get("url", "")
+        if not ollama_url:
+            return False, "Ollama URL not configured."
+        if not settings.ollama_model:
+            return False, "OLLAMA_MODEL not set. Configure it in config.py or env."
+        ok, status = check_server_health("ollama", ollama_url, timeout=5.0)
+        if ok:
+            return True, ""
+        return False, f"Ollama is {status or 'offline'} at {ollama_url}"
+    
+    if endpoint == "hf":
+        hf_url = ENDPOINTS.get("hf", {}).get("url", "")
+        if not hf_url:
+            return False, "HuggingFace URL not configured."
+        ok, status = check_server_health("hf", hf_url, timeout=5.0)
+        if ok:
+            return True, ""
+        return False, f"HuggingFace is {status or 'offline'} at {hf_url}"
+    
+    if endpoint == "koyeb":
+        koyeb_url = ENDPOINTS.get("koyeb", {}).get("url", "")
+        if not koyeb_url:
+            return False, "Koyeb URL not configured."
+        ready, status = check_server_health("koyeb", koyeb_url, timeout=5.0)
+        
+        if not ready and status == "sleeping":
+            wake_success, _ = wake_up_koyeb_service(koyeb_url)
+            if wake_success:
+                import time
+                time.sleep(3)
+                ready, status = check_server_health("koyeb", koyeb_url, timeout=10.0)
+        if ready:
+            return True, ""
+        return False, f"Koyeb is {status or 'offline'} at {koyeb_url}"
     
     # Other agents: Prefer Koyeb when available, fallback to HF
     koyeb_url = ENDPOINTS.get("koyeb", {}).get("url", "")
@@ -758,25 +926,61 @@ def format_compliance_html(review: Dict[str, Any]) -> str:
 # AGENT EXECUTION
 # ============================================================================
 
-async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str = "Agent", timeout_seconds: float = 60.0):
+async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str = "Agent", endpoint: str | None = None, timeout_seconds: float = 60.0):
     """Run an agent asynchronously and return results with tool usage."""
+    # Increase timeout for Ollama (local models are slower)
+    if endpoint == "ollama":
+        timeout_seconds = max(timeout_seconds, 120.0)
+    
     start_time = time.time()
     
     # Check backend
-    ready, msg = is_backend_ready(agent_name)
+    ready, msg = is_backend_ready(agent_name, endpoint)
     if not ready:
         return {"error": msg}, None, 0, {}
     
     try:
+        # Determine endpoint if not provided
+        if endpoint is None:
+            # Try to determine from agent's model
+            try:
+                if hasattr(agent, 'model'):
+                    endpoint = get_endpoint_from_model(agent.model)
+            except Exception:
+                pass
+            if endpoint is None:
+                endpoint = "unknown"
+        
+        # Run with Langfuse tracing
+        handler = LangfusePydanticAIHandler(
+            agent_name=agent_name,
+            endpoint=endpoint,
+        )
+        
         # Run with timeout
         if output_model:
             result = await asyncio.wait_for(
-                agent.run(prompt, output_type=output_model),
+                handler.trace_agent_run(
+                    agent,
+                    prompt,
+                    output_type=output_model,
+                    metadata={
+                        "endpoint": endpoint,
+                        "timeout": timeout_seconds,
+                    },
+                ),
                 timeout=timeout_seconds
             )
         else:
             result = await asyncio.wait_for(
-                agent.run(prompt),
+                handler.trace_agent_run(
+                    agent,
+                    prompt,
+                    metadata={
+                        "endpoint": endpoint,
+                        "timeout": timeout_seconds,
+                    },
+                ),
                 timeout=timeout_seconds
             )
         
@@ -803,16 +1007,21 @@ async def run_agent_async(agent, prompt: str, output_model=None, agent_name: str
             return {
                 "error": "Context length exceeded (8192 token limit). This usually happens when the agent makes too many tool calls. Try rephrasing your question more simply."
             }, None, elapsed, {}
+        # Check for JSON parsing errors (common with smaller models)
+        if "json_invalid" in error_msg.lower() or "invalid json" in error_msg.lower() or "eof while parsing" in error_msg.lower():
+            return {
+                "error": "JSON parsing error: The model generated malformed JSON when calling tools. This is common with smaller models. Try using a larger model endpoint or simplifying the request."
+            }, None, elapsed, {}
         return {"error": error_msg}, None, elapsed, {}
 
 
-def execute_agent(agent, prompt: str, output_model, agent_name: str):
+def execute_agent(agent, prompt: str, output_model, agent_name: str, endpoint: str | None = None):
     """Synchronous wrapper for agent execution."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
         output, usage, elapsed, tool_info = loop.run_until_complete(
-            run_agent_async(agent, prompt, output_model, agent_name)
+            run_agent_async(agent, prompt, output_model, agent_name, endpoint)
         )
         return output, usage, elapsed, tool_info
     finally:
@@ -911,36 +1120,114 @@ def run_agent_1(prompt: str, endpoint: str = "koyeb"):
     
     # Create agent dynamically with selected endpoint
     model = get_model_for_endpoint(endpoint)
-    agent = Agent(
-        model,
-        model_settings=ModelSettings(max_output_tokens=600),
-        system_prompt="""Expert analyse financière. Extrais données portfolios boursiers.
+    
+    # Verify the model is actually using the selected endpoint
+    actual_endpoint = get_endpoint_from_model(model)
+    if actual_endpoint != endpoint:
+        print(f"[WARNING] Agent 1: Requested endpoint '{endpoint}' but model is using '{actual_endpoint}'")
+    else:
+        print(f"[DEBUG] Agent 1: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
+    
+    # Adjust system prompt and settings for Ollama (needs explicit JSON format instruction)
+    if endpoint == "ollama":
+        system_prompt = """Expert analyse financière. Extrais données portfolios boursiers.
 Règles: Identifie symbole, quantité, prix_achat, date_achat pour chaque position.
 CALCUL CRITIQUE: Calculez valeur_totale en additionnant TOUS les produits (quantité × prix_achat) pour chaque position.
 Formule: valeur_totale = Σ(quantité × prix_achat) pour toutes les positions.
 Vérifiez que vous additionnez bien TOUTES les positions avant de donner la valeur totale.
-Répondez avec un objet Portfolio structuré.""",
+
+IMPORTANT: Répondez UNIQUEMENT en format JSON valide, sans texte supplémentaire, sans markdown, sans code blocks. 
+Le JSON doit être exactement:
+{
+  "positions": [
+    {"symbole": "AIR.PA", "quantite": 50, "prix_achat": 120.0, "date_achat": "2024-03-15"}
+  ],
+  "valeur_totale": 8550.0,
+  "date_evaluation": "2024-11-01"
+}
+Chaque position DOIT avoir date_achat au format YYYY-MM-DD (utilisez une date raisonnable si non spécifiée)."""
+        max_tokens = 1000  # Ollama needs more tokens
+    else:
+        system_prompt = """Expert analyse financière. Extrais données portfolios boursiers.
+Règles: Identifie symbole, quantité, prix_achat, date_achat pour chaque position.
+CALCUL CRITIQUE: Calculez valeur_totale en additionnant TOUS les produits (quantité × prix_achat) pour chaque position.
+Formule: valeur_totale = Σ(quantité × prix_achat) pour toutes les positions.
+Vérifiez que vous additionnez bien TOUTES les positions avant de donner la valeur totale.
+Répondez avec un objet Portfolio structuré."""
+        max_tokens = 600
+    
+    # Increase retries for Ollama (more lenient with JSON parsing)
+    retries = 2 if endpoint == "ollama" else 1
+    
+    agent = Agent(
+        model,
+        model_settings=ModelSettings(max_output_tokens=max_tokens),
+        system_prompt=system_prompt,
         output_type=Portfolio,
+        retries=retries,
     )
     
-    output, usage, elapsed, tool_info = execute_agent(agent, prompt, Portfolio, "Agent 1")
+    output, usage, elapsed, tool_info = execute_agent(agent, prompt, Portfolio, "Agent 1", endpoint)
     
     if isinstance(output, dict) and "error" in output:
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 1",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=output["error"],
+            input_prompt=prompt,
+            elapsed=elapsed,
+        )
         return output["error"], "", "", "Error"
+    
+    # Client-side validation: Calculate total from positions (don't trust model arithmetic)
+    calculation_corrected = False
+    original_value = None
+    if hasattr(output, 'positions') and hasattr(output, 'valeur_totale'):
+        calculated_total = sum(pos.quantite * pos.prix_achat for pos in output.positions)
+        if abs(output.valeur_totale - calculated_total) > 1:
+            original_value = output.valeur_totale
+            output.valeur_totale = calculated_total
+            calculation_corrected = True
+            print(f"[WARNING] Model calculated valeur_totale={original_value}, but correct value is {calculated_total}. Correcting.")
     
     # Store complete result with metadata
     complete_result = output.model_dump() if hasattr(output, 'model_dump') else output
     if isinstance(complete_result, dict):
-        complete_result["_metadata"] = {
+        metadata = {
             "tool_calls": tool_info.get("count", 0),
             "elapsed": elapsed,
             "endpoint_used": endpoint
         }
+        # Add calculation correction info if applicable
+        if calculation_corrected:
+            metadata["calculation_corrected"] = True
+            metadata["original_valeur_totale"] = original_value
+            metadata["corrected_valeur_totale"] = output.valeur_totale
+        complete_result["_metadata"] = metadata
     
-    results_store["Agent 1"] = complete_result
-    print(f"[DEBUG] Stored Agent 1 result. results_store now has {len(results_store)} entries: {list(results_store.keys())}")
+    # Store result using helper function (appends to list, doesn't overwrite)
+    store_agent_result(
+        agent_name="Agent 1",
+        output=output,
+        endpoint=endpoint,
+        success=True,
+        input_prompt=prompt,
+        elapsed=elapsed,
+        tool_info=tool_info,
+        metadata=metadata,
+    )
     
-    return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
+    # Format output with correction notice if applicable
+    parsed_output = format_parsed_output(output)
+    if calculation_corrected:
+        correction_notice = f"\n\n⚠️ **Calculation Correction:**\nThe model calculated a total value of {original_value:,.2f}€, but the correct value is {output.valeur_totale:,.2f}€ (calculated from extracted positions). The value has been automatically corrected.\n"
+        parsed_output = parsed_output + correction_notice
+    
+    model_name = get_model_display_name(endpoint)
+    return parsed_output, format_output(output), format_metrics(elapsed, usage, tool_info), f"Success with {model_name} ({elapsed:.2f}s)"
 
 
 def run_agent_2(prompt: str, endpoint: str = "koyeb"):
@@ -961,7 +1248,7 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
             "", "", "Error"
         )
     
-    ready, msg = is_backend_ready("Agent 2")
+    ready, msg = is_backend_ready("Agent 2", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
@@ -976,17 +1263,40 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
         try:
             # Create agent with selected endpoint
             model = get_model_for_endpoint(endpoint)
+            
+            # Verify the model is actually using the selected endpoint
+            actual_endpoint = get_endpoint_from_model(model)
+            if actual_endpoint != endpoint:
+                print(f"[WARNING] Agent 2: Requested endpoint '{endpoint}' but model is using '{actual_endpoint}'")
+            else:
+                print(f"[DEBUG] Agent 2: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
+            
             tool = select_tool_from_question(prompt)
+            # Adjust retries and tokens for Ollama
+            retries = 2 if endpoint == "ollama" else 0
+            max_tokens = 400 if endpoint == "ollama" else 200
+            if endpoint == "ollama":
+                system_prompt = """Calc. 1x outil. JSON. Répondez UNIQUEMENT en JSON valide, sans markdown, sans code blocks.
+Le JSON doit être exactement:
+{
+  "calculation_type": "valeur_future_composee",
+  "result": 74012.21,
+  "input_parameters": {"capital_initial": 50000, "taux_interet_annuel": 0.04, "periode_annees": 10},
+  "explanation": "Explication du calcul"
+}"""
+            else:
+                system_prompt = "Calc. 1x outil. JSON."
+            
             agent = Agent(
                 model,
                 model_settings=ModelSettings(
-                    max_output_tokens=200,
+                    max_output_tokens=max_tokens,
                     temperature=0.0,
                 ),
-                system_prompt="Calc. 1x outil. JSON.",
+                system_prompt=system_prompt,
                 tools=[tool],
                 output_type=FinancialCalculationResult,
-                retries=0,
+                retries=retries,
             )
             result = loop.run_until_complete(agent.run(prompt))
             elapsed = time.time() - start
@@ -1096,18 +1406,38 @@ def run_agent_2(prompt: str, endpoint: str = "koyeb"):
                 "compliance": compliance_verdict,
                 "elapsed": elapsed,
                 "endpoint_used": endpoint_used,
-                "model_used": "Llama 70B" if fallback_used else "Qwen 8B",
+                "model_used": get_model_display_name(endpoint_used),
                 "fallback": fallback_used
             }
         
-        results_store["Agent 2"] = complete_result
-        print(f"[DEBUG] Stored Agent 2 result. Keys: {list(complete_result.keys()) if isinstance(complete_result, dict) else 'not a dict'}")
+        # Store result using helper function
+        store_agent_result(
+            agent_name="Agent 2",
+            output=output,
+            endpoint=endpoint_used,
+            success=True,
+            input_prompt=prompt,
+            elapsed=elapsed,
+            tool_info={"count": len(tool_calls_formatted), "details": tool_calls_formatted},
+            metadata=complete_result.get("_metadata", {}),
+        )
         
-        model_used = "Llama 70B" if fallback_used else "Qwen 8B"
+        # Get model display name based on actual endpoint used
+        model_used = get_model_display_name(endpoint_used)
         return format_parsed_output(output), format_output(output), "".join(metrics_parts), f"Success with {model_used} ({elapsed:.2f}s)"
         
     except Exception as e:
-        return f"Error: {str(e)[:200]}", "", "", "Error"
+        error_msg = str(e)[:200]
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 2",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=error_msg,
+            input_prompt=prompt,
+        )
+        return f"Error: {error_msg}", "", "", "Error"
     finally:
         loop.close()
 
@@ -1128,12 +1458,19 @@ def run_agent_3(prompt: str, endpoint: str = "koyeb"):
             "", "", "Error"
         )
     
-    ready, msg = is_backend_ready("Agent 3")
+    ready, msg = is_backend_ready("Agent 3", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
     # Create agents dynamically with selected endpoint
     model = get_model_for_endpoint(endpoint)
+    
+    # Verify the model is actually using the selected endpoint
+    verified_endpoint = get_endpoint_from_model(model)
+    if verified_endpoint != endpoint:
+        print(f"[WARNING] Agent 3: Requested endpoint '{endpoint}' but model is using '{verified_endpoint}'")
+    else:
+        print(f"[DEBUG] Agent 3: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
     
     risk_analyst = Agent(
         model,
@@ -1204,11 +1541,36 @@ Considérez les régimes fiscaux: PEA, assurance-vie, compte-titres, etc.""",
                 "endpoint_used": endpoint
             }
         
-        results_store["Agent 3"] = output
+        # Store result using helper function
+        store_agent_result(
+            agent_name="Agent 3",
+            output=output,
+            endpoint=endpoint,
+            success=True,
+            input_prompt=prompt,
+            elapsed=elapsed,
+            tool_info=combined_tool_info,
+            metadata={
+                "tool_calls": combined_tool_info.get("count", 0),
+                "elapsed": elapsed,
+                "endpoint_used": endpoint
+            },
+        )
         metrics_html = format_metrics(elapsed, Usage(), combined_tool_info) + compliance_html
-        return format_parsed_output(output), format_output(output), metrics_html, f"Success ({elapsed:.2f}s)"
+        model_name = get_model_display_name(endpoint)
+        return format_parsed_output(output), format_output(output), metrics_html, f"Success with {model_name} ({elapsed:.2f}s)"
     except Exception as e:
-        return str(e), "", "", "Error"
+        error_msg = str(e)
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 3",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=error_msg,
+            input_prompt=prompt,
+        )
+        return error_msg, "", "", "Error"
     finally:
         loop.close()
 
@@ -1229,12 +1591,20 @@ def run_agent_4(prompt: str, endpoint: str = "koyeb"):
     from pydantic_ai import Agent, ModelSettings, Tool
     import time
     
-    ready, msg = is_backend_ready("Agent 4")
+    ready, msg = is_backend_ready("Agent 4", endpoint)
     if not ready:
         return msg, "", "", "Error"
     
     # Create agent dynamically with selected endpoint
     model = get_model_for_endpoint(endpoint)
+    
+    # Verify the model is actually using the selected endpoint
+    verified_endpoint = get_endpoint_from_model(model)
+    if verified_endpoint != endpoint:
+        print(f"[WARNING] Agent 4: Requested endpoint '{endpoint}' but model is using '{verified_endpoint}'")
+    else:
+        print(f"[DEBUG] Agent 4: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
+    
     agent_4 = Agent(
         model,
         model_settings=ModelSettings(max_output_tokens=800),
@@ -1310,7 +1680,20 @@ RÈGLES ABSOLUES:
         
         # Store complete result with all Greeks for judge agent
         complete_result = output.model_dump() if hasattr(output, 'model_dump') else output
-        results_store["Agent 4"] = complete_result
+        store_agent_result(
+            agent_name="Agent 4",
+            output=output,
+            endpoint=endpoint,
+            success=True,
+            input_prompt=prompt,
+            elapsed=elapsed,
+            tool_info={"count": len(tool_calls_formatted), "details": tool_calls_formatted},
+            metadata={
+                "tool_calls": len(tool_calls_formatted),
+                "elapsed": elapsed,
+                "endpoint_used": endpoint
+            },
+        )
         
         # Add metadata for judge
         if isinstance(complete_result, dict):
@@ -1324,15 +1707,22 @@ RÈGLES ABSOLUES:
         print(f"[DEBUG] Stored Agent 4 result with Greeks: {list(complete_result.keys()) if isinstance(complete_result, dict) else 'not a dict'}")
         
         metrics_html = format_metrics(elapsed, Usage(), tool_info) + tool_trace_html + compliance_html + compliance_verdict_html
-        return format_parsed_output(output), format_output(output), metrics_html, f"Success ({elapsed:.2f}s)"
+        model_name = get_model_display_name(endpoint)
+        return format_parsed_output(output), format_output(output), metrics_html, f"Success with {model_name} ({elapsed:.2f}s)"
     except Exception as e:
         return f"Error: {str(e)}", "", "", "Error"
     finally:
         loop.close()
 
 
-def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
-    """Run Agent 5 - Message Conversion."""
+def run_agent_5_convert(prompt: str, endpoint: str = "koyeb", direction: str = "swift_to_iso"):
+    """Run Agent 5 - Message Conversion.
+    
+    Args:
+        prompt: User input prompt
+        endpoint: Model endpoint to use
+        direction: Conversion direction - "swift_to_iso" or "iso_to_swift"
+    """
     # Check if endpoint is disabled for this agent
     if endpoint == "llm_pro_finance":
         return (
@@ -1359,7 +1749,13 @@ def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
             
             # Get model_settings (it's a dict, convert to ModelSettings)
             model_settings_dict = agent_5.model_settings if hasattr(agent_5, 'model_settings') else {}
-            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else None
+            # Adjust for Ollama: more tokens and retries
+            if endpoint == "ollama":
+                model_settings_dict = {**model_settings_dict, "max_output_tokens": 3000}
+                retries = 2
+            else:
+                retries = 1
+            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else ModelSettings(max_output_tokens=3000)
             
             # Get system prompt - try to extract from instructions or use the agent's method
             # Since system_prompt is a method that returns a function, we'll need to import it
@@ -1371,7 +1767,79 @@ def run_agent_5_convert(prompt: str, endpoint: str = "koyeb"):
             )
             from pydantic_ai import Tool
             
-            system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
+            # Ollama-specific prompt: needs explicit instructions to not modify XML/SWIFT messages
+            if endpoint == "ollama":
+                system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
+
+⚠️ RÈGLE CRITIQUE - NE PAS MODIFIER LES MESSAGES:
+- Passez les messages SWIFT et XML EXACTEMENT tels quels aux outils
+- NE PAS ajouter de markdown, de code blocks, ou de formatage
+- NE PAS modifier le contenu XML (garder <?xml version="1.0" intact)
+- NE PAS reformater les messages SWIFT
+
+⚠️ RÈGLE CRITIQUE - STRUCTURE DE RÉPONSE OBLIGATOIRE:
+
+Votre réponse DOIT suivre exactement cette structure:
+
+1. D'abord, appeler l'outil de conversion avec le message EXACT de l'utilisateur
+2. Ensuite, AFFICHER la réponse complète de l'outil en format JSON brut
+3. Enfin, expliquer le résultat
+
+EXEMPLE DE BONNE RÉPONSE:
+
+"J'appelle l'outil de conversion avec votre message SWIFT...
+
+**Réponse de l'outil:**
+```json
+{
+  "success": false,
+  "error": "SWIFT message validation failed",
+  "validation_errors": [
+    "Block 4 (Text Block) is missing or invalid"
+  ],
+  "validation_warnings": []
+}
+```
+
+**Analyse:**
+L'outil indique que le Block 4 (Text Block) est manquant ou invalide.
+
+**Message SWIFT MT103 complet et correct:**
+```
+{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
+-}
+```
+
+Note: Block 4 se termine par `-}` sur une ligne séparée."
+
+❌ NE PAS FAIRE:
+- Modifier les messages XML ou SWIFT avant de les passer aux outils
+- Ajouter du formatage markdown aux messages
+- Résumer la réponse de l'outil sans la montrer
+- Dire "L'outil a déterminé..." sans montrer le JSON
+
+✅ TOUJOURS FAIRE:
+- Passer les messages EXACTEMENT tels quels aux outils
+- Appeler l'outil
+- Afficher le JSON complet de la réponse
+- Puis expliquer
+
+OUTILS:
+- convertir_swift_vers_iso20022(swift_message: str) - Passez le message SWIFT brut, sans formatage
+- convertir_iso20022_vers_swift(iso20022_xml: str) - Passez le XML brut, sans formatage
+
+ACTION: Appelez l'outil avec le message EXACT de l'utilisateur et AFFICHEZ sa réponse JSON complète."""
+            else:
+                # Use original concise system prompt for non-Ollama endpoints (Koyeb, HF)
+                system_prompt = """Vous êtes un expert en conversion de messages financiers entre SWIFT MT et ISO 20022.
 
 RÈGLES ABSOLUES POUR LES CONVERSIONS:
 ⚠️  OBLIGATOIRE: Pour TOUTE conversion, utilisez UNIQUEMENT les outils de conversion dédiés:
@@ -1425,6 +1893,10 @@ Répondez en français avec les messages convertis."""
             # Get output_type
             output_type = agent_5.output_type if hasattr(agent_5, 'output_type') else None
             
+            # Ensure retries is defined
+            if 'retries' not in locals():
+                retries = 2  # Default to 2 retries for risk assessment
+            
             # Recreate the agent
             if model_settings and system_prompt:
                 dynamic_agent = Agent(
@@ -1433,6 +1905,7 @@ Répondez en français avec les messages convertis."""
                     system_prompt=system_prompt,
                     tools=tools,
                     output_type=output_type,
+                    retries=retries,
                 )
             else:
                 raise AttributeError("Could not access required agent configuration")
@@ -1447,17 +1920,34 @@ Répondez en français avec les messages convertis."""
                 if actual_endpoint == "unknown":
                     actual_endpoint = f"{endpoint} (fallback to default)"
         
+        # Enhance prompt with direction hint if not already clear
+        enhanced_prompt = prompt
+        if direction == "swift_to_iso" and "iso" not in prompt.lower() and "swift" in prompt.lower():
+            enhanced_prompt = f"Convertis ce message SWIFT MT vers ISO 20022:\n\n{prompt}"
+        elif direction == "iso_to_swift" and "swift" not in prompt.lower() and ("iso" in prompt.lower() or "xml" in prompt.lower() or "<" in prompt):
+            enhanced_prompt = f"Convertis ce message ISO 20022 vers SWIFT MT:\n\n{prompt}"
+        
         # Agent 5 operations can be complex - use longer timeout (120s)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             output, usage, elapsed, tool_info = loop.run_until_complete(
-                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Convert", timeout_seconds=120.0)
+                run_agent_async(dynamic_agent, enhanced_prompt, None, "Agent 5 - Convert", endpoint, timeout_seconds=120.0)
             )
         finally:
             loop.close()
         
         if isinstance(output, dict) and "error" in output:
+            # Store failed run
+            store_agent_result(
+                agent_name="Agent 5 - Convert",
+                output=None,
+                endpoint=endpoint,
+                success=False,
+                error_msg=output["error"],
+                input_prompt=prompt,
+                elapsed=elapsed,
+            )
             return output["error"], "", "", "Error"
         
         # Store complete result with metadata
@@ -1474,18 +1964,43 @@ Répondez en français avec les messages convertis."""
                 metadata["requested_endpoint"] = endpoint
             complete_result["_metadata"] = metadata
         
-        results_store["Agent 5 - Convert"] = complete_result
-        print(f"[DEBUG] Stored Agent 5-Convert result. Type: {type(complete_result)}")
+        # Store result using helper function
+        store_agent_result(
+            agent_name="Agent 5 - Convert",
+            output=output,
+            endpoint=actual_endpoint,
+            success=True,
+            input_prompt=prompt,
+            elapsed=elapsed,
+            tool_info=tool_info,
+            metadata=metadata,
+        )
         
-        return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
+        model_name = get_model_display_name(actual_endpoint)
+        return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success with {model_name} ({elapsed:.2f}s)"
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] Agent 5 Convert failed: {error_msg}")
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 5 - Convert",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=error_msg,
+            input_prompt=prompt,
+        )
         return f"Error: {error_msg}", "", "", "Error"
 
 
-def run_agent_5_validate(prompt: str, endpoint: str = "koyeb"):
-    """Run Agent 5 - Message Validation."""
+def run_agent_5_validate(prompt: str, endpoint: str = "koyeb", direction: str = "swift"):
+    """Run Agent 5 - Message Validation.
+    
+    Args:
+        prompt: User input prompt
+        endpoint: Model endpoint to use
+        direction: Validation direction - "swift" or "iso20022"
+    """
     # Check if endpoint is disabled for this agent
     if endpoint == "llm_pro_finance":
         return (
@@ -1504,6 +2019,14 @@ def run_agent_5_validate(prompt: str, endpoint: str = "koyeb"):
     
     # Create agent with selected endpoint model
     model = get_model_for_endpoint(endpoint)
+    
+    # Verify the model is actually using the selected endpoint
+    verified_endpoint = get_endpoint_from_model(model)
+    if verified_endpoint != endpoint:
+        print(f"[WARNING] Agent 5 Validate: Requested endpoint '{endpoint}' but model is using '{verified_endpoint}'")
+    else:
+        print(f"[DEBUG] Agent 5 Validate: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
+    
     # Track whether fallback occurred
     fallback_occurred = False
     actual_endpoint = endpoint
@@ -1572,9 +2095,26 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
             if actual_endpoint == "unknown":
                 actual_endpoint = f"{endpoint} (fallback to default)"
     
-    output, usage, elapsed, tool_info = execute_agent(dynamic_agent, prompt, None, "Agent 5 - Validate")
+    # Enhance prompt with direction hint if not already clear
+    enhanced_prompt = prompt
+    if direction == "swift" and "iso" not in prompt.lower() and "swift" not in prompt.lower():
+        enhanced_prompt = f"Valide ce message SWIFT MT:\n\n{prompt}"
+    elif direction == "iso20022" and "swift" not in prompt.lower() and ("iso" not in prompt.lower() and "xml" not in prompt.lower() and "<" not in prompt):
+        enhanced_prompt = f"Valide ce message ISO 20022:\n\n{prompt}"
+    
+    output, usage, elapsed, tool_info = execute_agent(dynamic_agent, enhanced_prompt, None, "Agent 5 - Validate", endpoint)
     
     if isinstance(output, dict) and "error" in output:
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 5 - Validate",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=output["error"],
+            input_prompt=prompt,
+            elapsed=elapsed,
+        )
         return output["error"], "", "", "Error"
     
     result_data = output.model_dump() if hasattr(output, 'model_dump') else str(output)
@@ -1589,12 +2129,29 @@ Répondez avec un objet ValidationResult structuré basé sur les résultats de 
             metadata["requested_endpoint"] = endpoint
         result_data["_metadata"] = metadata
     
-    results_store["Agent 5 - Validate"] = result_data
-    return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
+    # Store result using helper function
+    store_agent_result(
+        agent_name="Agent 5 - Validate",
+        output=output,
+        endpoint=actual_endpoint,
+        success=True,
+        input_prompt=prompt,
+        elapsed=elapsed,
+        tool_info=tool_info,
+        metadata=metadata,
+    )
+    model_name = get_model_display_name(actual_endpoint)
+    return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success with {model_name} ({elapsed:.2f}s)"
 
 
-def run_agent_5_risk(prompt: str, endpoint: str = "koyeb"):
-    """Run Agent 5 - Risk Assessment."""
+def run_agent_5_risk(prompt: str, endpoint: str = "koyeb", direction: str = "swift"):
+    """Run Agent 5 - Risk Assessment.
+    
+    Args:
+        prompt: User input prompt
+        endpoint: Model endpoint to use
+        direction: Message type direction - "swift" or "iso20022"
+    """
     # Check if endpoint is disabled for this agent
     if endpoint == "llm_pro_finance":
         return (
@@ -1610,6 +2167,14 @@ def run_agent_5_risk(prompt: str, endpoint: str = "koyeb"):
         
         # Create agent with selected endpoint model
         model = get_model_for_endpoint(endpoint)
+        
+        # Verify the model is actually using the selected endpoint
+        verified_endpoint = get_endpoint_from_model(model)
+        if verified_endpoint != endpoint:
+            print(f"[WARNING] Agent 5 Risk: Requested endpoint '{endpoint}' but model is using '{verified_endpoint}'")
+        else:
+            print(f"[DEBUG] Agent 5 Risk: Using endpoint '{endpoint}' - verified model type: {type(model).__name__}")
+        
         # Track whether fallback occurred
         fallback_occurred = False
         actual_endpoint = endpoint
@@ -1624,10 +2189,21 @@ def run_agent_5_risk(prompt: str, endpoint: str = "koyeb"):
             
             # Get model_settings (it's a dict, convert to ModelSettings)
             model_settings_dict = agent_5_risk.model_settings if hasattr(agent_5_risk, 'model_settings') else {}
-            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else None
+            # Adjust for different endpoints: increase tokens for complex risk assessments
+            if endpoint == "ollama":
+                # Ollama models (especially small ones like qwen2.5:3b) struggle with complex JSON tool calls
+                # Increase tokens significantly and add more retries
+                model_settings_dict = {**model_settings_dict, "max_output_tokens": 3000}
+                retries = 3  # More retries for Ollama to handle JSON parsing errors
+            else:
+                # For Koyeb/HF, increase tokens to handle complex tool calls and add retries for JSON parsing errors
+                model_settings_dict = {**model_settings_dict, "max_output_tokens": 2000}
+                retries = 2  # Increase retries to handle JSON parsing errors
+            model_settings = ModelSettings(**model_settings_dict) if model_settings_dict else ModelSettings(max_output_tokens=2000)
             
-            # Import system prompt
-            system_prompt = """Vous êtes un expert en évaluation des risques financiers et conformité AML/KYC.
+            # Import system prompt - use original for consistency
+            # The original system prompt from agent_5_risk is already well-designed
+            system_prompt = agent_5_risk.system_prompt if hasattr(agent_5_risk, 'system_prompt') else """Vous êtes un expert en évaluation des risques financiers et conformité AML/KYC.
 
 RÈGLES CRITIQUES:
 1. TOUJOURS utiliser les outils de risque pour évaluer les messages
@@ -1677,6 +2253,10 @@ Répondez avec un objet RiskScore structuré incluant:
             # Get output_type
             output_type = agent_5_risk.output_type if hasattr(agent_5_risk, 'output_type') else None
             
+            # Ensure retries is defined
+            if 'retries' not in locals():
+                retries = 2  # Default to 2 retries for risk assessment
+            
             # Recreate the agent
             if model_settings and system_prompt:
                 dynamic_agent = Agent(
@@ -1685,6 +2265,7 @@ Répondez avec un objet RiskScore structuré incluant:
                     system_prompt=system_prompt,
                     tools=tools,
                     output_type=output_type,
+                    retries=retries,
                 )
             else:
                 raise AttributeError("Could not access required agent configuration")
@@ -1695,20 +2276,37 @@ Répondez avec un objet RiskScore structuré incluant:
             # Get actual endpoint from fallback agent's model
             if hasattr(dynamic_agent, 'model'):
                 actual_endpoint = get_endpoint_from_model(dynamic_agent.model)
-                if actual_endpoint == "unknown":
-                    actual_endpoint = f"{endpoint} (fallback to default)"
+            if actual_endpoint == "unknown":
+                actual_endpoint = f"{endpoint} (fallback to default)"
+        
+        # Enhance prompt with direction hint if not already clear
+        enhanced_prompt = prompt
+        if direction == "swift" and "iso" not in prompt.lower() and "swift" not in prompt.lower():
+            enhanced_prompt = f"Évalue le risque AML/KYC de ce message SWIFT MT:\n\n{prompt}"
+        elif direction == "iso20022" and "swift" not in prompt.lower() and ("iso" not in prompt.lower() and "xml" not in prompt.lower() and "<" not in prompt):
+            enhanced_prompt = f"Évalue le risque AML/KYC de ce message ISO 20022:\n\n{prompt}"
         
         # Agent 5 Risk operations can be complex - use longer timeout (120s)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
             output, usage, elapsed, tool_info = loop.run_until_complete(
-                run_agent_async(dynamic_agent, prompt, None, "Agent 5 - Risk", timeout_seconds=120.0)
+                run_agent_async(dynamic_agent, enhanced_prompt, None, "Agent 5 - Risk", endpoint, timeout_seconds=120.0)
             )
         finally:
             loop.close()
         
         if isinstance(output, dict) and "error" in output:
+            # Store failed run
+            store_agent_result(
+                agent_name="Agent 5 - Risk",
+                output=None,
+                endpoint=endpoint,
+                success=False,
+                error_msg=output["error"],
+                input_prompt=enhanced_prompt,
+                elapsed=elapsed,
+            )
             return output["error"], "", "", "Error"
         
         result_data = output.model_dump() if hasattr(output, 'model_dump') else str(output)
@@ -1723,12 +2321,91 @@ Répondez avec un objet RiskScore structuré incluant:
                 metadata["requested_endpoint"] = endpoint
             result_data["_metadata"] = metadata
         
-        results_store["Agent 5 - Risk"] = result_data
-        return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
+        # Store result using helper function
+        store_agent_result(
+            agent_name="Agent 5 - Risk",
+            output=output,
+            endpoint=actual_endpoint,
+            success=True,
+            input_prompt=enhanced_prompt,
+            elapsed=elapsed,
+            tool_info=tool_info,
+            metadata=metadata,
+        )
+        model_name = get_model_display_name(actual_endpoint)
+        return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success with {model_name} ({elapsed:.2f}s)"
     except Exception as e:
         error_msg = str(e)
         print(f"[ERROR] Agent 5 Risk failed: {error_msg}")
-        return f"Error: {error_msg}", "", "", "Error"
+        
+        # Store failed run
+        store_agent_result(
+            agent_name="Agent 5 - Risk",
+            output=None,
+            endpoint=endpoint,
+            success=False,
+            error_msg=error_msg,
+            input_prompt=prompt,
+        )
+        
+        # Check for JSON parsing errors (common with smaller Ollama models)
+        if "json_invalid" in error_msg.lower() or "invalid json" in error_msg.lower() or "eof while parsing" in error_msg.lower():
+            model_name = get_model_display_name(endpoint)
+            friendly_msg = f"""**JSON Parsing Error**
+
+The model ({model_name}) generated malformed JSON when calling risk assessment tools. This is common with smaller models when handling complex tool calls.
+
+**What happened:**
+- The model attempted to call risk assessment tools but the JSON response was incomplete or malformed
+- This can happen when the model runs out of tokens or struggles with complex nested JSON structures
+
+**Suggestions:**
+- Try using a larger model (Koyeb or HuggingFace endpoint) for complex risk assessments
+- If using Ollama, consider using a larger model (e.g., `qwen2.5:7b` or `qwen2.5:14b` instead of `qwen2.5:3b`)
+- Simplify the input message if possible
+
+**Technical details:**
+```
+{error_msg[:500]}
+```"""
+            return friendly_msg, "", "", "Error"
+        
+        # Check for BadRequestError from PydanticAI
+        if "BadRequestError" in error_msg or "status_code: 400" in error_msg:
+            # Extract model name if present
+            model_name = get_model_display_name(endpoint)
+            if "json_invalid" in error_msg.lower() or "invalid json" in error_msg.lower():
+                friendly_msg = f"""**Tool Call Error**
+
+The model ({model_name}) encountered an error when generating tool calls for risk assessment.
+
+**What happened:**
+The model's response contained malformed JSON when trying to call risk assessment tools. This is a known limitation with smaller models handling complex multi-tool scenarios.
+
+**Suggestions:**
+- Use a larger model endpoint (Koyeb or HuggingFace) for complex risk assessments
+- If using Ollama, try a larger model variant
+- The task may be too complex for the current model size
+
+**Technical details:**
+```
+{error_msg[:400]}
+```"""
+            else:
+                friendly_msg = f"""**Request Error**
+
+The model ({model_name}) returned an error during risk assessment.
+
+**Error:**
+```
+{error_msg[:400]}
+```
+
+Please try again or use a different endpoint."""
+            return friendly_msg, "", "", "Error"
+        
+        # Generic error handling
+        return f"Error: {error_msg[:500]}", "", "", "Error"
 
 
 def run_agent_6(prompt: str):
@@ -1750,7 +2427,7 @@ def run_agent_6(prompt: str):
         return debug_msg, "", "", "No data"
     
     # Check backend
-    ready, msg = is_backend_ready("Agent 6")
+    ready, msg = is_backend_ready("Agent 6", "llm_pro_finance")
     if not ready:
         return msg, "", "", "Error"
     
@@ -1784,19 +2461,90 @@ Provide specific, constructive feedback.""",
         output_type=ComprehensiveJudgment,
     )
     
-    # Build context from previous results with detailed logging
-    print(f"[DEBUG] Building context for judge from {len(results_store)} agent results:")
-    for agent_name, result_data in results_store.items():
-        if isinstance(result_data, dict):
-            fields = list(result_data.keys())
-            print(f"  - {agent_name}: {len(fields)} fields: {fields}")
-        else:
-            print(f"  - {agent_name}: {type(result_data)}")
+    # Build comprehensive context from all agent runs (including failures)
+    print(f"[DEBUG] Building context for judge from {len(results_store)} agents:")
     
-    context = json.dumps(results_store, indent=2, default=str, ensure_ascii=False)
-    print(f"[DEBUG] Context size for judge: {len(context)} characters")
+    # Format context for judge agent with all runs
+    context_parts = []
+    total_runs = 0
     
-    full_prompt = f"{prompt}\n\nPrevious agent results:\n{context}"
+    for agent_name, runs_list in results_store.items():
+        if not runs_list:
+            continue
+        
+        total_runs += len(runs_list)
+        context_parts.append(f"\n=== {agent_name} ({len(runs_list)} run{'s' if len(runs_list) > 1 else ''}) ===\n")
+        
+        for i, run in enumerate(runs_list, 1):
+            run_status = "✅ SUCCESS" if run.get("success") else "❌ FAILED"
+            endpoint = run.get("endpoint", "unknown")
+            model = run.get("model", "unknown")
+            timestamp = run.get("timestamp", "unknown")
+            elapsed = run.get("elapsed")
+            input_prompt = run.get("input_prompt", "N/A")
+            
+            context_parts.append(f"\n--- Run #{i} ({run_status}) ---")
+            context_parts.append(f"Timestamp: {timestamp}")
+            context_parts.append(f"Endpoint: {endpoint}")
+            context_parts.append(f"Model: {model}")
+            if elapsed:
+                context_parts.append(f"Elapsed: {elapsed:.2f}s")
+            context_parts.append(f"Input Prompt: {input_prompt[:200]}{'...' if len(input_prompt) > 200 else ''}")
+            
+            if run.get("success"):
+                output = run.get("output")
+                if output:
+                    # Format output nicely
+                    if isinstance(output, dict):
+                        output_str = json.dumps(output, indent=2, default=str, ensure_ascii=False)
+                        # Truncate if too long
+                        if len(output_str) > 1000:
+                            output_str = output_str[:1000] + "\n... (truncated)"
+                        context_parts.append(f"Output:\n{output_str}")
+                    else:
+                        context_parts.append(f"Output: {str(output)[:500]}")
+                
+                # Add tool info
+                tool_calls = run.get("tool_calls", 0)
+                if tool_calls > 0:
+                    context_parts.append(f"Tool Calls: {tool_calls}")
+                    tool_details = run.get("tool_details", [])
+                    if tool_details:
+                        context_parts.append(f"Tools Used: {', '.join(str(td) for td in tool_details[:5])}")
+                
+                # Add metadata
+                metadata = run.get("metadata", {})
+                if metadata:
+                    endpoint_used = metadata.get("endpoint_used", endpoint)
+                    if endpoint_used != endpoint:
+                        context_parts.append(f"Note: Requested {endpoint} but used {endpoint_used}")
+                    if metadata.get("fallback_occurred"):
+                        context_parts.append(f"⚠️ Fallback occurred (requested: {metadata.get('requested_endpoint')})")
+            else:
+                error = run.get("error", "Unknown error")
+                context_parts.append(f"Error: {error[:500]}")
+            
+            context_parts.append("")  # Empty line between runs
+    
+    context = "\n".join(context_parts)
+    
+    print(f"[DEBUG] Context summary: {len(results_store)} agents, {total_runs} total runs")
+    print(f"[DEBUG] Context size: {len(context)} characters")
+    
+    full_prompt = f"""{prompt}
+
+=== COMPLETE AGENT EXECUTION HISTORY ===
+This includes ALL runs of all agents, including successes and failures, with different endpoints and models.
+
+{context}
+
+=== EVALUATION INSTRUCTIONS ===
+Please evaluate ALL runs shown above. Consider:
+1. Compare results across different endpoints/models for the same agent
+2. Identify which endpoints/models perform better for each task
+3. Note any failures and their causes
+4. Assess correctness, quality, and tool usage for each run
+5. Provide recommendations based on the complete execution history"""
     
     output, usage, elapsed, tool_info = execute_agent(judge_agent, full_prompt, ComprehensiveJudgment, "Agent 6")
     
@@ -1812,8 +2560,12 @@ Provide specific, constructive feedback.""",
         result_data["_metadata"]["elapsed"] = elapsed
         result_data["_metadata"]["tool_calls"] = tool_info.get("count", 0)
     
-    results_store["Agent 6"] = result_data
-    return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success ({elapsed:.2f}s)"
+    # Store judge result (but don't use helper to avoid circular reference)
+    if "Agent 6" not in results_store:
+        results_store["Agent 6"] = []
+    results_store["Agent 6"].append(result_data)
+    model_name = get_model_display_name("llm_pro_finance")  # Judge always uses LLM Pro Finance
+    return format_parsed_output(output), format_output(output), format_metrics(elapsed, usage, tool_info), f"Success with {model_name} ({elapsed:.2f}s)"
 
 
 # ============================================================================
@@ -1834,90 +2586,101 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
     info = AGENT_INFO[agent_key]
     
     gr.Markdown(f"### {info['title']}")
-    gr.Markdown(f"*{info['description']}*")
+    gr.Markdown(f"*{info['description']}*", elem_classes=["compact"])
     
     with gr.Row():
         with gr.Column(scale=1):
+            # Use more lines for Agent 5 tabs (SWIFT/ISO messages can be long)
+            input_lines = 12 if "Agent 5" in agent_key else 4
             input_text = gr.Textbox(
                 label="Input",
                 value=info["default_input"],
-                lines=5,
-                placeholder="Enter your prompt..."
+                lines=input_lines,
+                placeholder="Enter your prompt...",
+                container=False
             )
             
             # Endpoint selector (except for Judge)
             if is_judge:
-                gr.Markdown("**Model Endpoint:** LLM Pro 70B (fixed)")
+                gr.Markdown("**Model Endpoint:** LLM Pro 70B (fixed)", visible=False)
             else:
-                # Get available endpoints
+                # Get available endpoints for status indicators
                 exclude_list = exclude_endpoints or []
                 disabled_dict = disabled_endpoints or {}
                 available_endpoints = get_available_endpoints(include_llm_pro=True)
                 
-                # Build endpoint options with labels
-                # Include disabled endpoints but mark them clearly
-                endpoint_options = []
-                endpoint_values = []
-                disabled_info = []
+                # Build endpoint options - show allowed endpoints, omit disabled ones to avoid confusion
+                endpoint_choices = []  # List of (label, value) tuples
+                disabled_notes = []    # Collect disabled endpoints to display a note
                 
-                if available_endpoints.get("koyeb", False) and "koyeb" not in exclude_list:
-                    endpoint_options.append("Koyeb (Qwen 8B)")
-                    endpoint_values.append("koyeb")
-                if available_endpoints.get("hf", False) and "hf" not in exclude_list:
-                    endpoint_options.append("HuggingFace (Qwen 8B)")
-                    endpoint_values.append("hf")
+                # Always prefer Koyeb as first/default
+                if "koyeb" not in exclude_list:
+                    if "koyeb" in disabled_dict:
+                        disabled_notes.append(f"Koyeb ({disabled_dict['koyeb']})")
+                    else:
+                        endpoint_choices.append(("Koyeb", "koyeb"))
                 
-                # Handle LLM Pro - show as disabled if in disabled_endpoints, otherwise show normally
-                if available_endpoints.get("llm_pro_finance", False):
-                    if "llm_pro_finance" in disabled_dict:
-                        # Show as disabled
-                        endpoint_options.append("LLM Pro (Llama 70B) ⚠️ Disabled")
-                        endpoint_values.append("llm_pro_finance")
-                        disabled_info.append(f"**LLM Pro (Llama 70B):** {disabled_dict['llm_pro_finance']}")
-                    elif "llm_pro_finance" not in exclude_list:
-                        # Show as enabled
-                        endpoint_options.append("LLM Pro (Llama 70B)")
-                        endpoint_values.append("llm_pro_finance")
+                # HuggingFace
+                if "hf" not in exclude_list:
+                    if "hf" in disabled_dict:
+                        disabled_notes.append(f"HuggingFace ({disabled_dict['hf']})")
+                    else:
+                        endpoint_choices.append(("HuggingFace", "hf"))
                 
-                if available_endpoints.get("ollama", False) and "ollama" not in exclude_list:
+                # Ollama (always shown; note if not configured)
+                if "ollama" not in exclude_list:
                     ollama_settings = Settings()
-                    model_name = ollama_settings.ollama_model or "Local Model"
-                    endpoint_options.append(f"Ollama ({model_name})")
-                    endpoint_values.append("ollama")
+                    if "ollama" in disabled_dict:
+                        disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
+                    elif not ollama_settings.ollama_model:
+                        # Show selectable option but warn that config is needed
+                        local_models, total_local = get_local_ollama_models()
+                        if local_models:
+                            preview = ", ".join(local_models)
+                            if total_local > len(local_models):
+                                preview += ", ..."
+                            label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
+                        else:
+                            label = "Ollama (set OLLAMA_MODEL)"
+                        endpoint_choices.append((label, "ollama"))
+                    else:
+                        endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
                 
-                # Default to first available enabled endpoint (prefer koyeb > hf > llm_pro)
-                # Don't default to disabled endpoints
-                enabled_values = [v for v in endpoint_values if v not in disabled_dict]
-                default_endpoint = "koyeb" if "koyeb" in enabled_values else (enabled_values[0] if enabled_values else (endpoint_values[0] if endpoint_values else "koyeb"))
+                # LLM Pro
+                if "llm_pro_finance" not in exclude_list:
+                    if "llm_pro_finance" in disabled_dict:
+                        disabled_notes.append(f"LLM Pro ({disabled_dict['llm_pro_finance']})")
+                    else:
+                        endpoint_choices.append(("LLM Pro", "llm_pro_finance"))
                 
-                if endpoint_options:
-                    # Create choices as tuples (label, value) for Radio component
-                    # Gradio Radio expects (label, value) format
-                    endpoint_choices = list(zip(endpoint_options, endpoint_values))
-                    endpoint_selector = gr.Radio(
+                # Default to Koyeb if present, otherwise first available
+                default_value = (
+                    "koyeb"
+                    if any(v == "koyeb" for _, v in endpoint_choices)
+                    else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
+                )
+                
+                # Use compact Dropdown with explicit label
+                endpoint_selector = gr.Dropdown(
                         choices=endpoint_choices,
-                        label="Model Endpoint",
-                        value=default_endpoint,
-                        info="Select which endpoint to use for this agent"
-                    )
-                    
-                    # Show disabled endpoint info if any
-                    if disabled_info:
+                    value=default_value,
+                    label="Endpoint (default: Koyeb)",
+                    scale=1,
+                    container=False,
+                    show_label=True,
+                )
+                
+                # Show a compact note for disabled endpoints (not selectable)
+                if disabled_notes:
                         gr.Markdown(
-                            "<div style='margin-top: 8px; padding: 8px; background: #fef3c7; border-radius: 4px; border-left: 3px solid #f59e0b;'>"
-                            + "<div style='font-size: 12px; color: #92400e;'>" +
-                            "<strong>⚠️ Disabled Endpoints:</strong><br/>" +
-                            "<br/>".join(disabled_info) +
-                            "</div></div>"
-                        )
-                else:
-                    # No endpoints available - show warning
-                    gr.Markdown("⚠️ **No endpoints available** - Please check server status")
-                    endpoint_selector = gr.State(value="koyeb")  # Default fallback
+                        f"*Unavailable: {', '.join(disabled_notes)}*",
+                        elem_classes=["compact"],
+                    )
             
-            run_btn = gr.Button("Run", variant="primary")
-            status = gr.Textbox(label="Status", interactive=False, value="Ready")
-            metrics = gr.HTML(label="Metrics", value="<div style='padding: 8px; color: #9ca3af; font-size: 13px;'>Run agent to see metrics</div>")
+            with gr.Row():
+                run_btn = gr.Button("Run", variant="primary", scale=1, size="sm")
+                status = gr.Textbox(label="", interactive=False, value="Ready", scale=4, container=False, show_label=False)
+            metrics = gr.HTML(value="<div style='padding: 4px; color: #9ca3af; font-size: 11px;'>Run agent to see metrics</div>", visible=True, container=False)
         
         with gr.Column(scale=2):
             # Human-readable parsed output on top
@@ -1933,6 +2696,519 @@ def create_agent_tab(agent_key: str, run_fn, is_judge: bool = False, exclude_end
         # Other agents use selected endpoint
         # endpoint_selector is either a Radio or State component
         run_btn.click(fn=run_fn, inputs=[input_text, endpoint_selector], outputs=[parsed_output, json_output, metrics, status])
+
+
+def create_agent_5_convert_tab():
+    """Create a custom tab for Agent 5 Convert with direction toggle."""
+    info = AGENT_INFO["Agent 5 - Convert"]
+    
+    gr.Markdown(f"### {info['title']}")
+    gr.Markdown(f"*{info['description']}*", elem_classes=["compact"])
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            # Direction toggle
+            direction_selector = gr.Radio(
+                choices=[
+                    ("SWIFT MT → ISO 20022", "swift_to_iso"),
+                    ("ISO 20022 → SWIFT MT", "iso_to_swift")
+                ],
+                value="swift_to_iso",
+                label="Conversion Direction",
+                container=False,
+                show_label=True,
+            )
+            
+            # Input textbox with more lines for SWIFT/ISO messages
+            input_text = gr.Textbox(
+                label="Input",
+                value=info["default_input"],
+                lines=12,
+                placeholder="Enter SWIFT message or ISO 20022 XML...",
+                container=False
+            )
+            
+            # Update input based on direction
+            def update_input_for_direction(direction):
+                if direction == "swift_to_iso":
+                    return """Convertis ce SWIFT MT103 vers ISO 20022:
+
+{1:F01BANKFRPPAXXX1234567890}
+{2:O1031200210103BANKFRPPAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+:59:/DE89370400440532013000
+COMPAGNIE XYZ
+-}"""
+                else:
+                    return """Convertis ce message ISO 20022 vers SWIFT MT103:
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12">
+<CstmrCdtTrfInitn>
+<GrpHdr>
+<MsgId>MSG123456789</MsgId>
+<CreDtTm>2024-01-01T12:00:00</CreDtTm>
+<NbOfTxs>1</NbOfTxs>
+</GrpHdr>
+<PmtInf>
+<PmtInfId>PMT001</PmtInfId>
+<PmtMtd>TRF</PmtMtd>
+<ReqdExctnDt>2024-01-01</ReqdExctnDt>
+<Dbtr>
+<Nm>COMPAGNIE ABC</Nm>
+<PstlAdr>
+<Ctry>FR</Ctry>
+</PstlAdr>
+</Dbtr>
+<DbtrAcct>
+<Id>
+<IBAN>FR1420041010050500013M02606</IBAN>
+</Id>
+</DbtrAcct>
+<CdtTrfTxInf>
+<PmtId>
+<EndToEndId>REF123</EndToEndId>
+</PmtId>
+<InstdAmt Ccy="EUR">1000.00</InstdAmt>
+<Cdtr>
+<Nm>COMPAGNIE XYZ</Nm>
+<PstlAdr>
+<Ctry>DE</Ctry>
+</PstlAdr>
+</Cdtr>
+<CdtrAcct>
+<Id>
+<IBAN>DE89370400440532013000</IBAN>
+</Id>
+</CdtrAcct>
+</CdtTrfTxInf>
+</PmtInf>
+</CstmrCdtTrfInitn>
+</Document>"""
+            
+            direction_selector.change(
+                fn=update_input_for_direction,
+                inputs=[direction_selector],
+                outputs=[input_text]
+            )
+            
+            # Endpoint selector (reuse logic from create_agent_tab)
+            exclude_list = []
+            disabled_dict = {"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+            available_endpoints = get_available_endpoints(include_llm_pro=True)
+            
+            endpoint_choices = []
+            disabled_notes = []
+            
+            if "koyeb" not in exclude_list:
+                if "koyeb" in disabled_dict:
+                    disabled_notes.append(f"Koyeb ({disabled_dict['koyeb']})")
+                else:
+                    endpoint_choices.append(("Koyeb", "koyeb"))
+            
+            if "hf" not in exclude_list:
+                if "hf" in disabled_dict:
+                    disabled_notes.append(f"HuggingFace ({disabled_dict['hf']})")
+                else:
+                    endpoint_choices.append(("HuggingFace", "hf"))
+            
+            if "ollama" not in exclude_list:
+                ollama_settings = Settings()
+                if "ollama" in disabled_dict:
+                    disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
+                elif not ollama_settings.ollama_model:
+                    local_models, total_local = get_local_ollama_models()
+                    if local_models:
+                        preview = ", ".join(local_models)
+                        if total_local > len(local_models):
+                            preview += ", ..."
+                        label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
+                    else:
+                        label = "Ollama (set OLLAMA_MODEL)"
+                    endpoint_choices.append((label, "ollama"))
+                else:
+                    endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
+            
+            default_endpoint = "koyeb" if any(v == "koyeb" for _, v in endpoint_choices) else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
+            
+            endpoint_selector = gr.Dropdown(
+                choices=endpoint_choices,
+                value=default_endpoint,
+                label="Endpoint (default: Koyeb)",
+                scale=1,
+                container=False,
+                show_label=True,
+            )
+            
+            if disabled_notes:
+                gr.Markdown(
+                    f"*Unavailable: {', '.join(disabled_notes)}*",
+                    elem_classes=["compact"],
+                )
+            
+            with gr.Row():
+                run_btn = gr.Button("Run", variant="primary", scale=1, size="sm")
+                status = gr.Textbox(label="", interactive=False, value="Ready", scale=4, container=False, show_label=False)
+            metrics = gr.HTML(value="<div style='padding: 4px; color: #9ca3af; font-size: 11px;'>Run agent to see metrics</div>", visible=True, container=False)
+        
+        with gr.Column(scale=2):
+            parsed_output = gr.Markdown(label="Result", value="*Run agent to see results*")
+            json_output = gr.Code(label="JSON Output (Full Data)", language="json", lines=10)
+    
+    # Connect run button with direction parameter
+    run_btn.click(
+        fn=run_agent_5_convert,
+        inputs=[input_text, endpoint_selector, direction_selector],
+        outputs=[parsed_output, json_output, metrics, status]
+    )
+
+
+def create_agent_5_validate_tab():
+    """Create a custom tab for Agent 5 Validate with message type toggle."""
+    info = AGENT_INFO["Agent 5 - Validate"]
+    
+    gr.Markdown(f"### {info['title']}")
+    gr.Markdown(f"*{info['description']}*", elem_classes=["compact"])
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            # Message type toggle
+            direction_selector = gr.Radio(
+                choices=[
+                    ("SWIFT MT", "swift"),
+                    ("ISO 20022", "iso20022")
+                ],
+                value="swift",
+                label="Message Type",
+                container=False,
+                show_label=True,
+            )
+            
+            # Input textbox with more lines for SWIFT/ISO messages
+            # Start with malformed SWIFT message (default direction is "swift") - to demonstrate validation
+            default_swift_input = """{1:F01BANKFRPPAXXX1234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+-}"""
+            input_text = gr.Textbox(
+                label="Input",
+                value=default_swift_input,
+                lines=12,
+                placeholder="Enter SWIFT message or ISO 20022 XML...",
+                container=False
+            )
+            
+            # Update input based on message type
+            # For Validate: Use intentionally malformed messages to demonstrate validation capabilities
+            def update_input_for_direction(direction):
+                if direction == "swift":
+                    # Malformed SWIFT MT103 - missing Block 2, missing Block 5, incomplete Block 4
+                    return """{1:F01BANKFRPPAXXX1234567890}
+{4:
+:20:REF123
+:32A:240101EUR1000,00
+:50A:/FR1420041010050500013M02606
+COMPAGNIE ABC
+-}"""
+                else:
+                    # Malformed ISO 20022 - missing required elements (CdtrAcct, incomplete PmtId)
+                    return """<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12">
+<CstmrCdtTrfInitn>
+<GrpHdr>
+<MsgId>MSG123456789</MsgId>
+<CreDtTm>2024-01-01T12:00:00</CreDtTm>
+<NbOfTxs>1</NbOfTxs>
+</GrpHdr>
+<PmtInf>
+<PmtInfId>PMT001</PmtInfId>
+<PmtMtd>TRF</PmtMtd>
+<Dbtr>
+<Nm>COMPAGNIE ABC</Nm>
+</Dbtr>
+<DbtrAcct>
+<Id>
+<IBAN>FR1420041010050500013M02606</IBAN>
+</Id>
+</DbtrAcct>
+<CdtTrfTxInf>
+<PmtId>
+<EndToEndId>REF123</EndToEndId>
+</PmtId>
+<InstdAmt Ccy="EUR">1000.00</InstdAmt>
+<Cdtr>
+<Nm>COMPAGNIE XYZ</Nm>
+</Cdtr>
+</CdtTrfTxInf>
+</PmtInf>
+</CstmrCdtTrfInitn>
+</Document>"""
+            
+            direction_selector.change(
+                fn=update_input_for_direction,
+                inputs=[direction_selector],
+                outputs=[input_text]
+            )
+            
+            # Endpoint selector (reuse logic from create_agent_tab)
+            exclude_list = []
+            disabled_dict = {"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+            available_endpoints = get_available_endpoints(include_llm_pro=True)
+            
+            endpoint_choices = []
+            disabled_notes = []
+            
+            if "koyeb" not in exclude_list:
+                if "koyeb" in disabled_dict:
+                    disabled_notes.append(f"Koyeb ({disabled_dict['koyeb']})")
+                else:
+                    endpoint_choices.append(("Koyeb", "koyeb"))
+            
+            if "hf" not in exclude_list:
+                if "hf" in disabled_dict:
+                    disabled_notes.append(f"HuggingFace ({disabled_dict['hf']})")
+                else:
+                    endpoint_choices.append(("HuggingFace", "hf"))
+            
+            if "ollama" not in exclude_list:
+                ollama_settings = Settings()
+                if "ollama" in disabled_dict:
+                    disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
+                elif not ollama_settings.ollama_model:
+                    local_models, total_local = get_local_ollama_models()
+                    if local_models:
+                        preview = ", ".join(local_models)
+                        if total_local > len(local_models):
+                            preview += ", ..."
+                        label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
+                    else:
+                        label = "Ollama (set OLLAMA_MODEL)"
+                    endpoint_choices.append((label, "ollama"))
+                else:
+                    endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
+            
+            default_endpoint = "koyeb" if any(v == "koyeb" for _, v in endpoint_choices) else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
+            
+            endpoint_selector = gr.Dropdown(
+                choices=endpoint_choices,
+                value=default_endpoint,
+                label="Endpoint (default: Koyeb)",
+                scale=1,
+                container=False,
+                show_label=True,
+            )
+            
+            if disabled_notes:
+                gr.Markdown(
+                    f"*Unavailable: {', '.join(disabled_notes)}*",
+                    elem_classes=["compact"],
+                )
+            
+            with gr.Row():
+                run_btn = gr.Button("Run", variant="primary", scale=1, size="sm")
+                status = gr.Textbox(label="", interactive=False, value="Ready", scale=4, container=False, show_label=False)
+            metrics = gr.HTML(value="<div style='padding: 4px; color: #9ca3af; font-size: 11px;'>Run agent to see metrics</div>", visible=True, container=False)
+        
+        with gr.Column(scale=2):
+            parsed_output = gr.Markdown(label="Result", value="*Run agent to see results*")
+            json_output = gr.Code(label="JSON Output (Full Data)", language="json", lines=10)
+    
+    # Connect run button with direction parameter
+    run_btn.click(
+        fn=run_agent_5_validate,
+        inputs=[input_text, endpoint_selector, direction_selector],
+        outputs=[parsed_output, json_output, metrics, status]
+    )
+
+
+def create_agent_5_risk_tab():
+    """Create a custom tab for Agent 5 Risk with message type toggle."""
+    info = AGENT_INFO["Agent 5 - Risk"]
+    
+    gr.Markdown(f"### {info['title']}")
+    gr.Markdown(f"*{info['description']}*", elem_classes=["compact"])
+    
+    with gr.Row():
+        with gr.Column(scale=1):
+            # Message type toggle
+            direction_selector = gr.Radio(
+                choices=[
+                    ("SWIFT MT", "swift"),
+                    ("ISO 20022", "iso20022")
+                ],
+                value="swift",
+                label="Message Type",
+                container=False,
+                show_label=True,
+            )
+            
+            # Input textbox with more lines for SWIFT/ISO messages
+            # Start with SWIFT message (default direction is "swift") - appropriate for risk assessment
+            default_swift_input = """{1:F01BANKUSAAXXX1234567890}
+{2:O1031200210103BANKUSAAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF999
+:32A:240101USD50000,00
+:50A:/US1234567890
+SENDER COMPANY INC
+:59:/RU9876543210
+RUSSIAN ENTITY LLC
+-}
+{5:{MAC:ABCD1234}{CHK:EFGH5678}}"""
+            input_text = gr.Textbox(
+                label="Input",
+                value=default_swift_input,
+                lines=12,
+                placeholder="Enter SWIFT message or ISO 20022 XML...",
+                container=False
+            )
+            
+            # Update input based on message type
+            # For Risk: Use messages appropriate for AML/KYC risk assessment (higher amounts, different countries)
+            def update_input_for_direction(direction):
+                if direction == "swift":
+                    # Complete SWIFT MT103 with all blocks, suitable for risk assessment
+                    return """{1:F01BANKUSAAXXX1234567890}
+{2:O1031200210103BANKUSAAXXX22221234567890123456789012345678901234567890}
+{4:
+:20:REF999
+:32A:240101USD50000,00
+:50A:/US1234567890
+SENDER COMPANY INC
+:59:/RU9876543210
+RUSSIAN ENTITY LLC
+-}
+{5:{MAC:ABCD1234}{CHK:EFGH5678}}"""
+                else:
+                    # Complete ISO 20022 pacs.008 message for risk assessment (higher amount, different countries)
+                    return """<?xml version="1.0" encoding="UTF-8"?>
+<Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.12">
+<CstmrCdtTrfInitn>
+<GrpHdr>
+<MsgId>MSG999</MsgId>
+<CreDtTm>2024-01-01T12:00:00</CreDtTm>
+<NbOfTxs>1</NbOfTxs>
+<CtrlSum>50000.00</CtrlSum>
+</GrpHdr>
+<PmtInf>
+<PmtInfId>PMT999</PmtInfId>
+<PmtMtd>TRF</PmtMtd>
+<ReqdExctnDt>2024-01-01</ReqdExctnDt>
+<Dbtr>
+<Nm>SENDER COMPANY INC</Nm>
+<PstlAdr>
+<Ctry>US</Ctry>
+</PstlAdr>
+</Dbtr>
+<DbtrAcct>
+<Id>
+<IBAN>US1234567890</IBAN>
+</Id>
+</DbtrAcct>
+<CdtTrfTxInf>
+<PmtId>
+<InstrId>REF999</InstrId>
+<EndToEndId>REF999</EndToEndId>
+</PmtId>
+<InstdAmt Ccy="USD">50000.00</InstdAmt>
+<Cdtr>
+<Nm>RUSSIAN ENTITY LLC</Nm>
+<PstlAdr>
+<Ctry>RU</Ctry>
+</PstlAdr>
+</Cdtr>
+<CdtrAcct>
+<Id>
+<IBAN>RU9876543210</IBAN>
+</Id>
+</CdtrAcct>
+</CdtTrfTxInf>
+</PmtInf>
+</CstmrCdtTrfInitn>
+</Document>"""
+            
+            direction_selector.change(
+                fn=update_input_for_direction,
+                inputs=[direction_selector],
+                outputs=[input_text]
+            )
+            
+            # Endpoint selector (reuse logic from create_agent_tab)
+            exclude_list = []
+            disabled_dict = {"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
+            available_endpoints = get_available_endpoints(include_llm_pro=True)
+            
+            endpoint_choices = []
+            disabled_notes = []
+            
+            if "koyeb" not in exclude_list:
+                if "koyeb" in disabled_dict:
+                    disabled_notes.append(f"Koyeb ({disabled_dict['koyeb']})")
+                else:
+                    endpoint_choices.append(("Koyeb", "koyeb"))
+            
+            if "hf" not in exclude_list:
+                if "hf" in disabled_dict:
+                    disabled_notes.append(f"HuggingFace ({disabled_dict['hf']})")
+                else:
+                    endpoint_choices.append(("HuggingFace", "hf"))
+            
+            if "ollama" not in exclude_list:
+                ollama_settings = Settings()
+                if "ollama" in disabled_dict:
+                    disabled_notes.append(f"Ollama ({disabled_dict['ollama']})")
+                elif not ollama_settings.ollama_model:
+                    local_models, total_local = get_local_ollama_models()
+                    if local_models:
+                        preview = ", ".join(local_models)
+                        if total_local > len(local_models):
+                            preview += ", ..."
+                        label = f"Ollama (set OLLAMA_MODEL, e.g., {preview})"
+                    else:
+                        label = "Ollama (set OLLAMA_MODEL)"
+                    endpoint_choices.append((label, "ollama"))
+                else:
+                    endpoint_choices.append((f"Ollama ({ollama_settings.ollama_model})", "ollama"))
+            
+            default_endpoint = "koyeb" if any(v == "koyeb" for _, v in endpoint_choices) else (endpoint_choices[0][1] if endpoint_choices else "koyeb")
+            
+            endpoint_selector = gr.Dropdown(
+                choices=endpoint_choices,
+                value=default_endpoint,
+                label="Endpoint (default: Koyeb)",
+                scale=1,
+                container=False,
+                show_label=True,
+            )
+            
+            if disabled_notes:
+                gr.Markdown(
+                    f"*Unavailable: {', '.join(disabled_notes)}*",
+                    elem_classes=["compact"],
+                )
+            
+            with gr.Row():
+                run_btn = gr.Button("Run", variant="primary", scale=1, size="sm")
+                status = gr.Textbox(label="", interactive=False, value="Ready", scale=4, container=False, show_label=False)
+            metrics = gr.HTML(value="<div style='padding: 4px; color: #9ca3af; font-size: 11px;'>Run agent to see metrics</div>", visible=True, container=False)
+        
+        with gr.Column(scale=2):
+            parsed_output = gr.Markdown(label="Result", value="*Run agent to see results*")
+            json_output = gr.Code(label="JSON Output (Full Data)", language="json", lines=10)
+    
+    # Connect run button with direction parameter
+    run_btn.click(
+        fn=run_agent_5_risk,
+        inputs=[input_text, endpoint_selector, direction_selector],
+        outputs=[parsed_output, json_output, metrics, status]
+    )
 
 
 def create_interface():
@@ -1994,30 +3270,15 @@ def create_interface():
                 with gr.Tabs():
                     with gr.TabItem("Convert"):
                         gr.Markdown("**Bidirectional conversion:** SWIFT MT ↔ ISO 20022 XML")
-                        create_agent_tab(
-                            "Agent 5 - Convert", 
-                            run_agent_5_convert, 
-                            is_judge=False,
-                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
-                        )
+                        create_agent_5_convert_tab()
                     
                     with gr.TabItem("Validate"):
                         gr.Markdown("**Message validation:** Check structure, format, and required fields")
-                        create_agent_tab(
-                            "Agent 5 - Validate", 
-                            run_agent_5_validate, 
-                            is_judge=False,
-                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
-                        )
+                        create_agent_5_validate_tab()
                     
                     with gr.TabItem("Risk Assessment"):
                         gr.Markdown("**AML/KYC risk scoring:** Evaluate transaction risk indicators")
-                        create_agent_tab(
-                            "Agent 5 - Risk", 
-                            run_agent_5_risk, 
-                            is_judge=False,
-                            disabled_endpoints={"llm_pro_finance": "Tool calls not yet supported (coming soon)"}
-                        )
+                        create_agent_5_risk_tab()
             
             with gr.TabItem("Judge (70B)"):
                 create_agent_tab("Agent 6", run_agent_6, is_judge=True)

@@ -3,6 +3,15 @@
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+try:
+    from pydanticai_ollama.models.ollama import OllamaModel
+    from pydanticai_ollama.providers.ollama import OllamaProvider
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+    OllamaModel = None
+    OllamaProvider = None
+
 from app.config import settings, ENDPOINTS, get_best_available_endpoint
 
 # Create PydanticAI model using OpenAI-compatible endpoint
@@ -108,15 +117,24 @@ def get_model_for_endpoint(endpoint: str):
                 "Example: OLLAMA_MODEL=dragon-llm or OLLAMA_MODEL=qwen2.5:7b"
             )
         base_url = endpoint_config.get("url", "http://localhost:11434")
-        api_path = endpoint_config.get("api_path", "/v1")
         
-        return OpenAIChatModel(
-            model_name=settings.ollama_model,
-            provider=OpenAIProvider(
-                base_url=f"{base_url}{api_path}",
-                api_key="ollama",  # Required but ignored by Ollama
-            ),
-        )
+        # Use dedicated pydanticai-ollama package if available
+        if OLLAMA_AVAILABLE:
+            ollama_provider = OllamaProvider(base_url=base_url)
+            return OllamaModel(
+                model_name=settings.ollama_model,
+                provider=ollama_provider,
+            )
+        else:
+            # Fallback to OpenAI-compatible endpoint
+            api_path = endpoint_config.get("api_path", "/v1")
+            return OpenAIChatModel(
+                model_name=settings.ollama_model,
+                provider=OpenAIProvider(
+                    base_url=f"{base_url}{api_path}",
+                    api_key="ollama",  # Required but ignored by Ollama
+                ),
+            )
     else:
         raise ValueError(f"Unknown endpoint: {endpoint}. Must be one of: 'koyeb', 'hf', 'llm_pro_finance', 'ollama'")
 

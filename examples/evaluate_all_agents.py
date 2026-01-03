@@ -16,6 +16,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.models import finance_model
 from app.mitigation_strategies import ToolCallDetector
+from app.langfuse_integration import LangfusePydanticAIHandler
+from app.langfuse_evaluation import score_trace, create_evaluation_run
+from app.langfuse_datasets import get_dataset_items
 
 # Import optimized agents
 from examples.agent_1 import agent_1, Portfolio
@@ -936,6 +939,15 @@ async def main():
     """Run all evaluations."""
     print("Running comprehensive agent evaluation with strict correctness checks...")
     print("This may take a few minutes...\n")
+    
+    # Create Langfuse evaluation run if configured
+    evaluation_run_id = None
+    try:
+        evaluation_run_id = create_evaluation_run("comprehensive_evaluation", "all_agents")
+        if evaluation_run_id:
+            print(f"📊 Langfuse evaluation run created: {evaluation_run_id}\n")
+    except Exception as e:
+        print(f"⚠️  Could not create Langfuse evaluation run: {e}\n")
     
     results = []
     

@@ -70,15 +70,22 @@ class Settings(BaseSettings):
     llm_pro_finance_url: str = ""
     
     # Ollama local model configuration
-    ollama_model: str = ""  # Model name to use (e.g., "dragon-llm", "qwen2.5:7b")
+    ollama_model: str = "qwen2.5:3b-instruct"  # Model name to use (e.g., "dragon-llm", "qwen2.5:7b", "ministral-3:14b-instruct-2512-q4_K_M")
     
     # Validators to strip quotes from env values
-    @field_validator('llm_pro_finance_key', 'llm_pro_finance_url', 'api_key', 'ollama_model', mode='before')
+    @field_validator('llm_pro_finance_key', 'llm_pro_finance_url', 'api_key', 'ollama_model', 'langfuse_public_key', 'langfuse_secret_key', 'langfuse_host', 'langfuse_base_url', mode='before')
     @classmethod
     def strip_quotes_from_value(cls, v):
         if isinstance(v, str):
             return strip_quotes(v)
         return v
+    
+    @property
+    def langfuse_host_resolved(self) -> str:
+        """Get Langfuse host, preferring langfuse_base_url if set, otherwise langfuse_host."""
+        if self.langfuse_base_url:
+            return self.langfuse_base_url
+        return self.langfuse_host
     
     @property
     def judge_api_key(self) -> str:
@@ -100,6 +107,14 @@ class Settings(BaseSettings):
     
     # Logfire configuration
     environment: str = "development"  # development, staging, production
+    
+    # Langfuse configuration (optional)
+    enable_langfuse: bool = True
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+    # Support LANGFUSE_BASE_URL as alias for langfuse_host
+    langfuse_base_url: str = ""
     
     # Generation settings for reasoning models
     max_tokens: int = 1500
