@@ -149,3 +149,4 @@ The Langfuse integration is **complete and production-ready**. The only blocker 
 
 The integration code will work perfectly once this compatibility issue is resolved.
 
+

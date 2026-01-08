@@ -57,19 +57,46 @@ class ToolCallDetector:
     """Détecte et valide les appels d'outils dans les résultats d'agents."""
     
     @staticmethod
-    def extract_tool_calls(result: RunResult) -> List[Dict[str, Any]]:
-        """Extrait tous les tool calls d'un résultat d'agent."""
+    def extract_tool_calls(result: RunResult, include_final_result: bool = False) -> List[Dict[str, Any]]:
+        """Extrait tous les tool calls d'un résultat d'agent.
+        
+        PydanticAI uses message.parts with ToolCallPart/ToolReturnPart objects.
+        The 'final_result' tool is PydanticAI's internal mechanism for structured output.
+        
+        Args:
+            result: Agent run result
+            include_final_result: If False, excludes 'final_result' (structured output mechanism)
+        """
         tool_calls = []
+        seen_ids = set()  # Deduplicate by tool_call_id
         
         try:
             for msg in result.all_messages():
-                msg_calls = getattr(msg, "tool_calls", None) or []
-                for call in msg_calls:
-                    tool_info = ToolCallDetector._extract_tool_info(call)
-                    if tool_info:
-                        tool_calls.append(tool_info)
+                # PydanticAI style - check msg.parts for ToolCallPart
+                if hasattr(msg, 'parts'):
+                    for part in msg.parts:
+                        # Only count ToolCallPart, NOT ToolReturnPart
+                        part_type = type(part).__name__
+                        if part_type == 'ToolCallPart' and hasattr(part, 'tool_name'):
+                            # Skip final_result unless explicitly requested
+                            if not include_final_result and part.tool_name == 'final_result':
+                                continue
+                            
+                            # Deduplicate by tool_call_id
+                            call_id = getattr(part, 'tool_call_id', None)
+                            if call_id and call_id in seen_ids:
+                                continue
+                            if call_id:
+                                seen_ids.add(call_id)
+                            
+                            tool_info = {
+                                "name": part.tool_name,
+                                "args": getattr(part, 'args', {}) or {},
+                                "tool_call_id": call_id,
+                                "raw": part,
+                            }
+                            tool_calls.append(tool_info)
         except Exception as e:
-            # Log error but don't fail
             logger.debug(f"Error extracting tool calls: {e}")
         
         return tool_calls

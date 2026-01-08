@@ -1,23 +1,23 @@
 {
-  "timestamp": "2025-12-11T13:36:42.093887",
+  "timestamp": "2026-01-08T18:39:51.630142",
   "summary": {
-    "total_agents": 7,
-    "agents_using_tools": 6,
-    "correct_results": 6,
-    "avg_tokens": 4064.0,
-    "avg_speed": 262.3918473319036
+    "total_agents": 8,
+    "agents_using_tools": 7,
+    "correct_results": 8,
+    "avg_tokens": 3043.75,
+    "avg_speed": 264.4141909482012
   },
   "agents": [
     {
       "name": "Agent 1: Structured Data Extraction",
       "tokens_input": 578,
-      "tokens_output": 215,
-      "tokens_total": 793,
+      "tokens_output": 216,
+      "tokens_total": 794,
       "tools_called": false,
       "tool_names": [],
       "tool_calls": [],
       "input_prompt": "Extrais le portfolio: 50 AIR.PA à 120€, 30 SAN.PA à 85€, 100 TTE.PA à 55€",
-      "output_text": "positions=[PositionBoursiere(symbole='AIR.PA', quantite=50, prix_achat=120.0, date_achat='2024-01-01'), PositionBoursiere(symbole='SAN.PA', quantite=30, prix_achat=85.0, date_achat='2024-01-02'), PositionBoursiere(symbole='TTE.PA', quantite=100, prix_achat=55.0, date_achat='2024-01-03')] valeur_totale=9125.0 date_evaluation='2024-01-31'",
+      "output_text": "positions=[PositionBoursiere(symbole='AIR.PA', quantite=50, prix_achat=120.0, date_achat='2023-01-15'), PositionBoursiere(symbole='SAN.PA', quantite=30, prix_achat=85.0, date_achat='2023-01-20'), PositionBoursiere(symbole='TTE.PA', quantite=100, prix_achat=55.0, date_achat='2023-01-25')] valeur_totale=10325.0 date_evaluation='2023-02-01'",
       "all_messages": [
         {
           "role": "unknown",
@@ -32,8 +32,8 @@
           "content": null
         }
       ],
-      "inference_time": 5.537232875823975,
-      "tokens_per_second": 143.21232604507296,
+      "inference_time": 5.4972920417785645,
+      "tokens_per_second": 144.4347496850674,
       "correctness": "✓ Correct",
       "expected_result": 14050,
       "actual_result": 14050.0,
@@ -45,9 +45,9 @@
     },
     {
       "name": "Agent 2: Financial Tools",
-      "tokens_input": 769,
-      "tokens_output": 171,
-      "tokens_total": 940,
+      "tokens_input": 754,
+      "tokens_output": 157,
+      "tokens_total": 911,
       "tools_called": true,
       "tool_names": [
         "calculer_valeur_future",
@@ -66,7 +66,7 @@
         }
       ],
       "input_prompt": "50000€ a 4% sur 5 ans?",
-      "output_text": "calculation_type='Valeur future' result=55204.04 input_parameters={'capital': 50000, 'taux': 4, 'duree': 5} explanation='La valeur future de 50000€ à 4% sur 5 ans est de 55204.04€.'",
+      "output_text": "calculation_type='Valeur future' result=60832.65 input_parameters={'capital': 50000, 'taux': 4, 'duree': 5} explanation='La valeur future de 50000€ à 4% sur 5 ans est de 60,832.65€.'",
       "all_messages": [
         {
           "role": "unknown",
@@ -81,7 +81,18 @@
               "name": "unknown",
               "parameters": {},
               "result": null
-            },
+            }
+          ]
+        },
+        {
+          "role": "unknown",
+          "content": null,
+          "tool_calls": []
+        },
+        {
+          "role": "unknown",
+          "content": null,
+          "tool_calls": [
             {
               "name": "unknown",
               "parameters": {},
@@ -95,14 +106,12 @@
           "tool_calls": []
         }
       ],
-      "inference_time": 4.341449975967407,
-      "tokens_per_second": 216.51752414595987,
-      "correctness": "✗ Incorrect",
+      "inference_time": 4.127677917480469,
+      "tokens_per_second": 220.705204769483,
+      "correctness": "✓ Correct",
       "expected_result": "~60,833€",
-      "actual_result": "55,204",
-      "errors": [
-        "Value mismatch: expected 60832.64512000001, got 55204.04 (diff: 5628.605120000007)"
-      ],
+      "actual_result": "60,833",
+      "errors": [],
       "improvements": [
         "Tool signatures normalized - accepts positive/negative inputs",
         "Structured tool returns improve value extraction"
@@ -123,8 +132,8 @@
       "input_prompt": null,
       "output_text": null,
       "all_messages": [],
-      "inference_time": 6.07018518447876,
-      "tokens_per_second": 510.692821683033,
+      "inference_time": 5.349658966064453,
+      "tokens_per_second": 579.476190849705,
       "correctness": "✓ Correct",
       "expected_result": "~74,012€ + Compliance check",
       "actual_result": "74,012",
@@ -137,9 +146,9 @@
     },
     {
       "name": "Agent 3: Multi-Step Workflow",
-      "tokens_input": 4417,
-      "tokens_output": 593,
-      "tokens_total": 5010,
+      "tokens_input": 2754,
+      "tokens_output": 557,
+      "tokens_total": 3311,
       "tools_called": true,
       "tool_names": [
         "calculer_rendement_portfolio",
@@ -160,11 +169,11 @@
       "input_prompt": null,
       "output_text": null,
       "all_messages": [],
-      "inference_time": 14.291157007217407,
-      "tokens_per_second": 350.5664375158582,
+      "inference_time": 13.408432960510254,
+      "tokens_per_second": 246.93415030312394,
       "correctness": "✓ Correct",
       "expected_result": "Valid structured outputs (risk 1-5, tax regime)",
-      "actual_result": "Risk: 3/5, Tax: Mixte (PEA + Compte-titres + SCPI + Assurance-vie)",
+      "actual_result": "Risk: 2/5, Tax: Mixte (PEA + Compte-titres + Assurance-vie + SCPI)",
       "errors": [],
       "improvements": [
         "Multi-step workflow working correctly",
@@ -173,33 +182,15 @@
     },
     {
       "name": "Agent 4: Option Pricing",
-      "tokens_input": 5664,
-      "tokens_output": 780,
-      "tokens_total": 6444,
+      "tokens_input": 2316,
+      "tokens_output": 311,
+      "tokens_total": 2627,
       "tools_called": true,
       "tool_names": [
-        "calculer_prix_call_black_scholes",
-        "calculer_prix_call_black_scholes",
-        "calculer_prix_call_black_scholes",
         "calculer_prix_call_black_scholes",
         "final_result"
       ],
       "tool_calls": [
-        {
-          "name": "calculer_prix_call_black_scholes",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "calculer_prix_call_black_scholes",
-          "parameters": {},
-          "result": null
-        },
-        {
-          "name": "calculer_prix_call_black_scholes",
-          "parameters": {},
-          "result": null
-        },
         {
           "name": "calculer_prix_call_black_scholes",
           "parameters": {},
@@ -214,8 +205,8 @@
       "input_prompt": null,
       "output_text": null,
       "all_messages": [],
-      "inference_time": 18.726322174072266,
-      "tokens_per_second": 344.1145538402683,
+      "inference_time": 7.4609479904174805,
+      "tokens_per_second": 352.1000284915543,
       "correctness": "✓ Correct",
       "expected_result": null,
       "actual_result": "2.0000",
@@ -240,8 +231,8 @@
       "input_prompt": null,
       "output_text": null,
       "all_messages": [],
-      "inference_time": 29.60895299911499,
-      "tokens_per_second": 94.56599157976615,
+      "inference_time": 11.973594188690186,
+      "tokens_per_second": 233.84791198659266,
       "correctness": "✓ Correct",
       "expected_result": "Price in range (4.635000000000001, 5.665000000000001) (~5.15) + Compliance check",
       "actual_result": "5.1461",
@@ -254,9 +245,9 @@
     },
     {
       "name": "Agent 5: SWIFT/ISO 20022 Converter",
-      "tokens_input": 7141,
-      "tokens_output": 2220,
-      "tokens_total": 9361,
+      "tokens_input": 7078,
+      "tokens_output": 2100,
+      "tokens_total": 9178,
       "tools_called": true,
       "tool_names": [
         "convertir_swift_vers_iso20022"
@@ -271,8 +262,8 @@
       "input_prompt": null,
       "output_text": null,
       "all_messages": [],
-      "inference_time": 52.86511993408203,
-      "tokens_per_second": 177.07327651336666,
+      "inference_time": 49.700575828552246,
+      "tokens_per_second": 184.66586849336613,
       "correctness": "✓ Correct",
       "expected_result": "ISO 20022 XML message with conversion details",
       "actual_result": "ISO 20022 conversion completed",
@@ -280,6 +271,42 @@
       "improvements": [
         "Tool calling for message conversion working",
         "Structured message parsing and generation"
+      ]
+    },
+    {
+      "name": "Agent 5 Validator: Message Validation",
+      "tokens_input": 1175,
+      "tokens_output": 454,
+      "tokens_total": 1629,
+      "tools_called": true,
+      "tool_names": [
+        "valider_swift_message",
+        "final_result"
+      ],
+      "tool_calls": [
+        {
+          "name": "valider_swift_message",
+          "parameters": {},
+          "result": null
+        },
+        {
+          "name": "final_result",
+          "parameters": {},
+          "result": null
+        }
+      ],
+      "input_prompt": null,
+      "output_text": null,
+      "all_messages": [],
+      "inference_time": 10.6366708278656,
+      "tokens_per_second": 153.14942300671743,
+      "correctness": "✓ Correct",
+      "expected_result": "Validation report with structure/format checks",
+      "actual_result": "Validation completed",
+      "errors": [],
+      "improvements": [
+        "Validation tool calling working",
+        "Structured validation reports"
       ]
     }
   ]

@@ -81,3 +81,4 @@ The MCP server provides access to:
 - `mcp_langfuse-docs_getLangfuseDocsPage()`
 - `mcp_langfuse-docs_searchLangfuseDocs()`
 
+

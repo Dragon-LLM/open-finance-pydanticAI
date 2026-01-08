@@ -184,6 +184,8 @@ agent = Agent(model, system_prompt="...", tools=[...])
 
 ## Evaluation
 
+### Local Evaluation
+
 Run comprehensive evaluation suite:
 
 ```bash
@@ -196,6 +198,49 @@ Results saved to `examples/evaluate_all_agents_results.json` with:
 - Correctness validation
 - Inference speed metrics
 - Endpoint metadata
+
+### Langfuse Evaluation (Observability)
+
+Run all agents with Langfuse tracing and scoring:
+
+```bash
+# Run all agents on HuggingFace endpoint
+python examples/run_all_evaluations.py --endpoint hf --max-items 3
+
+# Run specific agents on Koyeb endpoint
+python examples/run_all_evaluations.py --endpoint koyeb --agents agent_1 agent_2 --max-items 5
+```
+
+**Metrics recorded to Langfuse**:
+- `latency_seconds`: End-to-end response time
+- `tokens_per_second`: Inference throughput
+- `input_tokens` / `output_tokens`: Token usage
+- `tools_used`: Whether tools were called (boolean)
+- `structured_output_ok`: Pydantic validation passed (boolean)
+- `correctness`: Expected output match (boolean)
+- `difficulty`: Test case difficulty (categorical)
+
+**Per-agent evaluators**:
+| Agent | Evaluator Focus |
+|-------|-----------------|
+| Agent 1 | Portfolio schema validation, position extraction, total calculation |
+| Agent 2 | Tool usage detection, financial calculation accuracy |
+| Agent 3 | Risk analysis schema (niveau_risque 1-5), facteurs_risque completeness |
+| Agent 4 | QuantLib tool usage, option price and Greeks validation |
+| Agent 5 | SWIFT/ISO20022 conversion, message parsing validation |
+
+**Configuration** (`.env`):
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+```
+
+View results at [cloud.langfuse.com](https://cloud.langfuse.com).
+
+### Alternative: Logfire + Pydantic Evals (Coming Soon)
+
+Support for Pydantic Logfire observability and Pydantic Evals is planned.
 
 ## Model Deployment
 

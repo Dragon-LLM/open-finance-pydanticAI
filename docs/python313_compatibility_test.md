@@ -140,3 +140,4 @@ The integration code is ready and will work perfectly with Python 3.13. The only
 2. Update project documentation to specify Python 3.13 requirement
 3. Test the full integration with actual Langfuse credentials
 
+
