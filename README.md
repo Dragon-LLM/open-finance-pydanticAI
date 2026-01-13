@@ -14,6 +14,48 @@ Demo project exploring PydanticAI agents for financial tasks. Features tool call
 
 **Backend**: Requires an LLM server. See [Dragon-LLM/simple-open-finance-8B](https://github.com/Dragon-LLM/simple-open-finance-8B) for deployment instructions.
 
+## About PydanticAI
+
+[PydanticAI](https://ai.pydantic.dev/) is a framework for building AI agents with type-safe structured outputs, tool calling, and memory. It leverages Pydantic schemas for validation and integrates seamlessly with OpenAI-compatible APIs.
+
+**Key features:**
+- Structured outputs with automatic validation
+- Tool calling with Python functions
+- Memory and context management
+- Type-safe agent definitions
+
+**Example: Agent with tools**
+
+```python
+from pydantic_ai import Agent, ModelSettings
+from pydantic import BaseModel
+
+# Define a tool
+def calculer_valeur_future(capital: float, taux: float, duree: float) -> str:
+    """Calculate future value with compound interest."""
+    import numpy_financial as npf
+    return f"FV: {npf.fv(taux, duree, 0, -capital):,.2f}€"
+
+# Define structured output
+class Result(BaseModel):
+    calculation_type: str
+    result: float
+    explanation: str
+
+# Create agent
+agent = Agent(
+    model,
+    tools=[calculer_valeur_future],
+    output_type=Result,
+    system_prompt="Financial advisor. Use tools for calculations."
+)
+
+# Run agent
+result = await agent.run("50000€ at 4% for 10 years. Future value?")
+```
+
+See `examples/agent_2.py` for a complete implementation with multiple financial tools.
+
 ---
 
 ## Disclaimer

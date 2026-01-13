@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-finance-pydanticai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Open Finance API using PydanticAI"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -20,7 +20,7 @@ dependencies = [
     "numpy-financial>=1.0.0",
     "pandas>=2.0.0",
     "scipy>=1.10.0",
-    "logfire>=0.0.1",
+    "logfire>=4.0.0",
     "gradio>=4.0.0",
     "langfuse>=2.50.0",
 ]
