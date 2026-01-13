@@ -122,11 +122,34 @@ L'observabilité est essentielle pour les applications LLM. Ce projet intègre d
 - Instrumentation automatique de tous les agents PydanticAI
 - Trace les runs d'agents, appels d'outils et générations LLM sans modification de code
 - Intégration native avec l'écosystème Pydantic
+- **[Logfire Evals](https://ai.pydantic.dev/evals/)** : Nouveau framework d'évaluation pour tests systématiques des agents
 
 **Langfuse** (orienté LLM)
 - Gestion détaillée des traces avec spans hiérarchiques
 - Datasets d'évaluation et scoring
 - Suivi des coûts et analytics d'usage
+
+### Métriques Capturées
+
+| Métrique | Logfire | Langfuse | Description |
+|----------|---------|----------|-------------|
+| Runs d'agents | ✅ | ✅ | Début/fin, durée, succès/échec |
+| Appels d'outils | ✅ | ✅ | Outils appelés, arguments, résultats |
+| Tokens utilisés | ✅ | ✅ | Tokens entrée/sortie par génération |
+| Latence | ✅ | ✅ | Temps de réponse par span |
+| Sorties structurées | ✅ | ✅ | Validation modèle Pydantic |
+| Dépassement contexte | ✅ | — | Détecte quand limite de contexte dépassée |
+| Anomalies tool calls | ✅ | — | Signale boucles d'outils excessives |
+| Scores d'évaluation | ✅ | ✅ | Métriques de justesse, efficacité |
+
+### Alertes & Tableaux de Bord
+
+Avec Logfire, vous pouvez configurer des alertes pour :
+- **Dépassement de contexte** : L'agent dépasse la fenêtre de contexte du modèle
+- **Anomalies d'outils** : Patterns inhabituels d'appels (boucles, retries)
+- **Latence élevée** : Temps de réponse dépassant les seuils
+
+Voir `docs/logfire_setup.md` pour les requêtes SQL de configuration des alertes et dashboards.
 
 ### Configuration
 
@@ -179,11 +202,14 @@ OLLAMA_MODEL=dragon-llm
 # Démarrer l'interface Gradio
 python app/gradio_app.py
 
-# Lancer la suite d'évaluation
-python examples/evaluate_all_agents.py
+# Évaluations Logfire
+python examples/run_logfire_evaluation.py --all --max-items 3
 
-# Exécuter avec traçage Langfuse
-python examples/run_all_evaluations.py --endpoint koyeb --max-items 5
+# Évaluations Langfuse
+python examples/run_langfuse_evaluation.py --agents agent_1 agent_2 --max-items 3
+
+# Pydantic Evals (framework officiel)
+python examples/run_pydantic_evals.py --all --max-cases 3
 ```
 
 ---
@@ -192,21 +218,25 @@ python examples/run_all_evaluations.py --endpoint koyeb --max-items 5
 
 ```
 app/
-├── gradio_app.py       # Interface web
-├── observability.py    # Handler unifié Langfuse + Logfire
-├── config.py           # Paramètres et configuration endpoints
-└── models.py           # Instanciation des modèles par endpoint
+├── gradio_app.py          # Interface web
+├── observability.py       # Handler unifié Langfuse + Logfire
+├── config.py              # Configuration des endpoints
+├── models.py              # Instanciation des modèles
+├── langfuse_*.py          # Intégration Langfuse
+├── logfire_*.py           # Intégration et métriques Logfire
 
 examples/
-├── agent_1.py          # Extraction de portefeuille
-├── agent_2.py          # Calculs financiers
-├── agent_3.py          # Conseil risque et fiscal
-├── agent_4.py          # Pricing d'options
-├── agent_5.py          # Conversion SWIFT/ISO 20022
-├── agent_5_validator.py
-├── agent_5_risk.py
-├── judge_agent.py      # Évaluation des sorties
-└── evaluate_*.py       # Scripts d'évaluation
+├── agent_1.py             # Extraction de portefeuille
+├── agent_2.py             # Calculs financiers
+├── agent_3.py             # Workflow multi-agent risque/fiscal
+├── agent_4.py             # Pricing d'options (QuantLib)
+├── agent_5.py             # Conversion SWIFT/ISO 20022
+├── agent_5_validator.py   # Validation des messages
+├── agent_5_risk.py        # Évaluation risque AML
+├── judge_agent.py         # Agent d'évaluation 70B
+├── run_langfuse_evaluation.py
+├── run_logfire_evaluation.py
+└── run_pydantic_evals.py
 ```
 
 ---

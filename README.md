@@ -122,11 +122,34 @@ Observability is essential for LLM applications. This project integrates two pla
 - Automatic instrumentation of all PydanticAI agents
 - Traces agent runs, tool calls, and LLM generations without code changes
 - Native integration with Pydantic ecosystem
+- **[Logfire Evals](https://ai.pydantic.dev/evals/)**: New evaluation framework for systematic agent testing
 
 **Langfuse** (LLM-focused)
 - Detailed trace management with hierarchical spans
 - Evaluation datasets and scoring
 - Cost tracking and usage analytics
+
+### What's Tracked
+
+| Metric | Logfire | Langfuse | Description |
+|--------|---------|----------|-------------|
+| Agent runs | ✅ | ✅ | Start/end, duration, success/failure |
+| Tool calls | ✅ | ✅ | Which tools, arguments, results |
+| Token usage | ✅ | ✅ | Input/output tokens per generation |
+| Latency | ✅ | ✅ | Response times per span |
+| Structured outputs | ✅ | ✅ | Pydantic model validation |
+| Context overflow | ✅ | — | Detects when context limit exceeded |
+| Tool call anomalies | ✅ | — | Flags excessive tool loops |
+| Evaluation scores | ✅ | ✅ | Correctness, efficiency metrics |
+
+### Alerts & Dashboards
+
+With Logfire, you can configure alerts for:
+- **Context overflow**: Agent exceeds model's context window
+- **Tool call anomalies**: Unusual tool invocation patterns (loops, retries)
+- **High latency**: Response times exceeding thresholds
+
+See `docs/logfire_setup.md` for SQL queries to set up alerts and dashboards.
 
 ### Configuration
 
@@ -179,11 +202,14 @@ OLLAMA_MODEL=dragon-llm
 # Start the Gradio interface
 python app/gradio_app.py
 
-# Run evaluation suite
-python examples/evaluate_all_agents.py
+# Run Logfire evaluations
+python examples/run_logfire_evaluation.py --all --max-items 3
 
-# Run with Langfuse tracing
-python examples/run_all_evaluations.py --endpoint koyeb --max-items 5
+# Run Langfuse evaluations
+python examples/run_langfuse_evaluation.py --agents agent_1 agent_2 --max-items 3
+
+# Run Pydantic Evals (official framework)
+python examples/run_pydantic_evals.py --all --max-cases 3
 ```
 
 ---
@@ -192,21 +218,25 @@ python examples/run_all_evaluations.py --endpoint koyeb --max-items 5
 
 ```
 app/
-├── gradio_app.py       # Web interface
-├── observability.py    # Unified Langfuse + Logfire handler
-├── config.py           # Settings and endpoint configuration
-└── models.py           # Model instantiation per endpoint
+├── gradio_app.py          # Web interface
+├── observability.py       # Unified Langfuse + Logfire handler
+├── config.py              # Settings and endpoint configuration
+├── models.py              # Model instantiation per endpoint
+├── langfuse_*.py          # Langfuse integration
+├── logfire_*.py           # Logfire integration and metrics
 
 examples/
-├── agent_1.py          # Portfolio extraction
-├── agent_2.py          # Financial calculations
-├── agent_3.py          # Risk and tax advice
-├── agent_4.py          # Option pricing
-├── agent_5.py          # SWIFT/ISO 20022 conversion
-├── agent_5_validator.py
-├── agent_5_risk.py
-├── judge_agent.py      # Output evaluation
-└── evaluate_*.py       # Evaluation scripts
+├── agent_1.py             # Portfolio extraction
+├── agent_2.py             # Financial calculations
+├── agent_3.py             # Multi-agent risk/tax workflow
+├── agent_4.py             # Option pricing (QuantLib)
+├── agent_5.py             # SWIFT/ISO 20022 conversion
+├── agent_5_validator.py   # Message validation
+├── agent_5_risk.py        # AML risk assessment
+├── judge_agent.py         # 70B evaluation agent
+├── run_langfuse_evaluation.py
+├── run_logfire_evaluation.py
+└── run_pydantic_evals.py
 ```
 
 ---
